@@ -16,6 +16,15 @@ class TaskWithDuration:
     duration_minutes: int
 
 
+@dataclass(frozen=True)
+class Task:
+    """A task with all attributes for optimization."""
+    name: str
+    duration: int  # in minutes
+    utility: float
+    category: str  # "work", "health", or "leisure"
+
+
 @dataclass
 class TimeWindow:
     """Available time window for the day."""

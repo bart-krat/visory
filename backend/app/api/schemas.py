@@ -55,3 +55,30 @@ class WorkflowMessageRequest(BaseModel):
 
     session_id: str
     message: str
+
+
+class Task(BaseModel):
+    """A task with all attributes for optimization."""
+
+    name: str
+    duration: int  # in minutes
+    utility: float
+    category: str  # "work", "health", or "leisure"
+
+
+class ScheduledTask(BaseModel):
+    """A task scheduled at a specific time."""
+
+    task: str
+    category: str
+    start_time: str  # "HH:MM"
+    end_time: str    # "HH:MM"
+    duration_minutes: int
+
+
+class DailyPlan(BaseModel):
+    """The optimized daily plan."""
+
+    schedule: list[ScheduledTask]
+    time_window_start: str | None = None
+    time_window_end: str | None = None
