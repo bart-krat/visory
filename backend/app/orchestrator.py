@@ -1,9 +1,15 @@
+"""Orchestrator - runs the planning pipeline workflow."""
 from enum import Enum
-from app.state import PlannerState, CONSTRAINTS, CustomConstraint
+from app.state import (
+    PlannerState,
+    ConstraintSet,
+    MustIncludeTask,
+    FixedTimeSlot,
+)
 from app.categorize import get_categorize_service
 from app.constraints import get_constraints_service, ConstraintClarification, get_constraint_matcher
 from app.optimize import get_optimizer_service
-from app.utility import UtilityQuestionnaire, QUESTIONS
+from app.utility import UtilityQuestionnaire
 
 
 class WorkflowPhase(str, Enum):
@@ -36,8 +42,11 @@ class Orchestrator:
         self.questionnaire = UtilityQuestionnaire()
         self.categorize_service = get_categorize_service()
         self.constraints_service = get_constraints_service()
-        self.constraint_clarification: ConstraintClarification | None = None  # Built dynamically with tasks
+        self.constraint_clarification: ConstraintClarification | None = None
         self.optimizer_service = get_optimizer_service()
+
+        # Typed constraints for optimizer
+        self.constraint_set = ConstraintSet()
 
     def _persist_state(self):
         """Save current state to disk."""
@@ -64,68 +73,49 @@ class Orchestrator:
         return f"{WELCOME_MESSAGE}Question {q_num}/{total}: {first_question}"
 
     def process_message(self, user_message: str):
-        """Process a user message based on current phase.
-
-        Args:
-            user_message: The user's input.
-
-        Yields:
-            Response chunks (for streaming) or returns response string.
-        """
+        """Process a user message based on current phase."""
         self.conversation_history.append({"role": "user", "content": user_message})
 
         if self.phase == WorkflowPhase.QUESTIONNAIRE:
             yield from self._handle_questionnaire(user_message)
-
         elif self.phase == WorkflowPhase.EVALUATION:
             yield from self._handle_evaluation()
-
         elif self.phase == WorkflowPhase.COLLECT_TASKS:
             yield from self._handle_collect_tasks(user_message)
-
         elif self.phase == WorkflowPhase.CONSTRAINTS:
             yield from self._handle_constraints(user_message)
-
         elif self.phase == WorkflowPhase.CONSTRAINT_CLARIFICATION:
             yield from self._handle_constraint_clarification(user_message)
-
         elif self.phase == WorkflowPhase.OPTIMIZE:
             yield from self._handle_optimize()
 
     def _handle_questionnaire(self, user_message: str):
-        """Handle the questionnaire phase - ask questions one at a time."""
-        # Store the answer
+        """Handle the questionnaire phase."""
         current_q = self.questionnaire.get_current_question()
         self.state.questionnaire_answers.append({
             "question": current_q,
             "answer": user_message,
         })
 
-        # Get next question
         next_question = self.questionnaire.submit_answer(user_message)
 
         if next_question:
-            # More questions to ask
             q_num = self.questionnaire.get_question_number()
             total = self.questionnaire.get_total_questions()
             response = f"Question {q_num}/{total}: {next_question}"
             yield response
             self.conversation_history.append({"role": "assistant", "content": response})
         else:
-            # All questions answered, move to evaluation
             self.phase = WorkflowPhase.EVALUATION
             self._persist_state()
             yield from self._handle_evaluation()
 
     def _handle_evaluation(self):
-        """Handle the evaluation phase - send to LLM and get utility weights."""
+        """Handle the evaluation phase."""
         yield "Thank you! Analyzing your responses to understand your priorities...\n\n"
 
         try:
-            # Evaluate the questionnaire
             weights = self.questionnaire.evaluate()
-
-            # Store weights in state
             self.state.utility_weights = {
                 "work": weights.work,
                 "health": weights.health,
@@ -133,23 +123,20 @@ class Orchestrator:
             }
             self._persist_state()
 
-            # Show the user their weights
             yield f"Based on your answers, here's how I understand your priorities:\n\n"
-            yield f"  💼 Work:    {weights.work:.0f}/300\n"
-            yield f"  💪 Health:  {weights.health:.0f}/300\n"
-            yield f"  🎮 Personal: {weights.personal:.0f}/300\n\n"
+            yield f"  Work:     {weights.work:.0f}/300\n"
+            yield f"  Health:   {weights.health:.0f}/300\n"
+            yield f"  Personal: {weights.personal:.0f}/300\n\n"
 
             if weights.reasoning:
                 yield f"_{weights.reasoning}_\n\n"
 
-            # Move to collect tasks phase
             self.phase = WorkflowPhase.COLLECT_TASKS
             self._persist_state()
-
             yield TASKS_MESSAGE
             self.conversation_history.append({"role": "assistant", "content": TASKS_MESSAGE})
 
-        except Exception as e:
+        except Exception:
             yield f"I had trouble analyzing your responses. Using balanced weights.\n\n"
             self.state.utility_weights = {"work": 100, "health": 100, "personal": 100}
             self.phase = WorkflowPhase.COLLECT_TASKS
@@ -161,20 +148,16 @@ class Orchestrator:
         raw_tasks = self._parse_tasks_from_message(user_message)
         self.state.raw_tasks = raw_tasks
 
-        # Categorize tasks with user's utility weights
         self.state.tasks = self.categorize_service.categorize(
             raw_tasks,
             utility_weights=self.state.utility_weights,
         )
 
-        # Move to constraints phase
         self.phase = WorkflowPhase.CONSTRAINTS
         self._persist_state()
 
-        # Simple message - the frontend will show the constraints table
         response = "Great! I've categorized your tasks. Please set the duration for each task and your available time window."
         yield response
-
         self.conversation_history.append({"role": "assistant", "content": response})
 
     def _handle_constraints(self, user_message: str):
@@ -191,17 +174,14 @@ class Orchestrator:
             yield response
         else:
             tasks, time_window = result
-            self.state.tasks = tasks  # Tasks now have duration filled
+            self.state.tasks = tasks
             self.state.time_window = time_window
 
-            # Build constraint clarification with current tasks for dynamic options
             self.constraint_clarification = ConstraintClarification(tasks=self.state.tasks)
 
-            # Move to constraint clarification phase
             self.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
             self._persist_state()
 
-            # Stream the constraint clarification question
             full_response = ""
             for chunk in self.constraint_clarification.generate_question():
                 full_response += chunk
@@ -210,20 +190,23 @@ class Orchestrator:
             self.conversation_history.append({"role": "assistant", "content": full_response})
 
     def _handle_constraint_clarification(self, user_message: str):
-        """Handle the constraint clarification phase (single constraint via chat)."""
-        result = self.constraint_clarification.parse_response(user_message)
+        """Handle the constraint clarification phase."""
+        # Use semantic matcher to parse any user input
+        matcher = get_constraint_matcher(self.state.tasks)
+        self.constraint_set = matcher.match(user_message)
 
-        if result is None:
-            # No input - optimize without constraints
+        if self.constraint_set.is_empty():
             yield "No constraints specified. Optimizing for maximum utility...\n\n"
-            self._apply_no_constraints()
-        elif isinstance(result, CustomConstraint):
-            # Custom text constraint - use semantic matching
-            yield from self._handle_custom_constraint(result)
         else:
-            # Standard task constraint
-            yield f"Applying constraint: **{result.button_label}**\n\n"
-            self.apply_constraints([result])
+            yield f"Understood: {self.constraint_set.describe()}\n\n"
+
+        # Add fixed time slots from task.time_slot
+        for task in self.state.tasks:
+            if task.time_slot is not None:
+                self.constraint_set.add(FixedTimeSlot(
+                    task_name=task.name,
+                    start_time=task.time_slot,
+                ))
 
         # Move to optimize phase
         self.phase = WorkflowPhase.OPTIMIZE
@@ -231,99 +214,46 @@ class Orchestrator:
 
         yield from self._handle_optimize()
 
-    def _handle_custom_constraint(self, custom: CustomConstraint):
-        """Process a custom text constraint using semantic matching."""
-        matcher = get_constraint_matcher(self.state.tasks)
-        matched = matcher.match(custom)
-
-        if matched.is_matched:
-            yield f"I understood your constraint: \"{custom.raw_text}\"\n"
-            yield f"_{matched.match_explanation}_\n\n"
-
-            # Apply the matched constraints
-            self._apply_matched_constraint(matched)
-        else:
-            # No matches found - optimize without constraints
-            yield f"I couldn't match specific tasks or categories from: \"{custom.raw_text}\"\n"
-            yield "Optimizing for maximum utility instead...\n\n"
-            self._apply_no_constraints()
-
-    def _apply_matched_constraint(self, custom: CustomConstraint):
-        """Apply a matched custom constraint to the optimizer."""
-        router = self.optimizer_service.router
-
-        # Convert to optimizer parameters
-        mandatory_tasks = set(custom.matched_tasks) if custom.matched_tasks else None
-        mandatory_categories = set(custom.matched_categories) if custom.matched_categories else None
-
-        router.mandatory_tasks = mandatory_tasks
-        router.mandatory_categories = mandatory_categories
-
-        # Store in state for display
-        self.state.constraints = []  # Clear button constraints
-        # Store custom constraint info (using a Constraint for compatibility)
-        from app.state import Constraint
-        self.state.constraints.append(Constraint(
-            id="CUSTOM",
-            name="Custom Constraint",
-            description=custom.raw_text,
-            button_label=custom.match_explanation,
-        ))
-
-    def _apply_no_constraints(self):
-        """Apply no constraints (pure utility optimization)."""
-        router = self.optimizer_service.router
-        router.mandatory_tasks = None
-        router.mandatory_categories = None
-        self.state.constraints = []
-
-    def apply_constraints(self, constraints: list):
-        """Apply multiple constraints to the optimizer.
+    def apply_constraints_from_ids(self, constraint_ids: list[str]) -> None:
+        """Apply constraints from button selection IDs.
 
         Args:
-            constraints: List of Constraint objects to apply.
+            constraint_ids: List of button IDs like ["TASK_Gym", "TASK_Run"]
         """
-        from app.state import Constraint
+        self.constraint_set = self.constraint_clarification.selection_to_constraints(constraint_ids)
 
-        self.state.constraints = constraints
-        router = self.optimizer_service.router
+        # Add fixed time slots from task.time_slot
+        for task in self.state.tasks:
+            if task.time_slot is not None:
+                self.constraint_set.add(FixedTimeSlot(
+                    task_name=task.name,
+                    start_time=task.time_slot,
+                ))
 
-        # Combine all constraints into mandatory_categories and mandatory_tasks
-        mandatory_categories: set[str] = set()
-        mandatory_tasks: set[str] = set()
-        has_none = False
-        has_all_categories = False
+    def apply_constraints_from_text(self, text: str) -> ConstraintSet:
+        """Apply constraints from custom text.
 
-        for constraint in constraints:
-            if constraint.id == "ALL_CATEGORIES":
-                has_all_categories = True
-            elif constraint.id == "NONE":
-                has_none = True
-            elif constraint.id.startswith("CATEGORY_"):
-                category = constraint.id.replace("CATEGORY_", "").lower()
-                mandatory_categories.add(category)
-            elif constraint.id.startswith("TASK_"):
-                task_name = constraint.id.replace("TASK_", "")
-                mandatory_tasks.add(task_name)
+        Args:
+            text: Natural language constraint description.
 
-        # ALL_CATEGORIES overrides individual categories
-        if has_all_categories:
-            mandatory_categories = {"work", "personal", "health"}
+        Returns:
+            The parsed ConstraintSet.
+        """
+        matcher = get_constraint_matcher(self.state.tasks)
+        self.constraint_set = matcher.match(text)
 
-        # NONE clears all constraints (only applies if it's the only selection)
-        if has_none and len(constraints) == 1:
-            mandatory_categories = set()
-            mandatory_tasks = set()
+        # Add fixed time slots from task.time_slot
+        for task in self.state.tasks:
+            if task.time_slot is not None:
+                self.constraint_set.add(FixedTimeSlot(
+                    task_name=task.name,
+                    start_time=task.time_slot,
+                ))
 
-        # Set router constraints (None means no constraint, empty set also means no constraint)
-        router.mandatory_categories = mandatory_categories if mandatory_categories else None
-        router.mandatory_tasks = mandatory_tasks if mandatory_tasks else None
+        return self.constraint_set
 
     def run_optimization(self):
-        """Run optimization and yield progress/results.
-
-        Public method for API to call directly.
-        """
+        """Run optimization and yield progress/results."""
         self.phase = WorkflowPhase.OPTIMIZE
         yield from self._handle_optimize()
 
@@ -331,39 +261,34 @@ class Orchestrator:
         """Handle the optimization phase."""
         yield "Creating your optimized schedule...\n\n"
 
+        # Run optimizer with constraint set
         router = self.optimizer_service.router
-
-        # Set fixed_slots from tasks that have time_slot specified
-        fixed_slots = {
-            task.name: task.time_slot
-            for task in self.state.tasks
-            if task.time_slot is not None
-        }
-        router.fixed_slots = fixed_slots if fixed_slots else None
-
-        # Get the optimizer type that will be selected
-        selected_type = router._select_optimizer(self.state.tasks, self.state.time_window)
-        self.state.optimizer_type = selected_type.value
-
-        # Run the optimizer
-        daily_plan = self.optimizer_service.run_optimizer(
+        selected_type = router._select_optimizer(
             self.state.tasks,
             self.state.time_window,
+            self.constraint_set,
+        )
+        self.state.optimizer_type = selected_type.value
+
+        daily_plan = router.optimize(
+            self.state.tasks,
+            self.state.time_window,
+            constraints=self.constraint_set,
         )
         self.state.daily_plan = daily_plan
 
-        # Move to complete phase and persist
         self.phase = WorkflowPhase.COMPLETE
         self._persist_state()
 
-        # Format the schedule for display
         schedule_text = self._format_schedule(daily_plan)
         yield schedule_text
-
         self.conversation_history.append({"role": "assistant", "content": schedule_text})
 
     def _format_schedule(self, daily_plan) -> str:
         """Format the daily plan as readable text."""
+        if not daily_plan.schedule:
+            return "Could not create a schedule that satisfies all constraints.\n"
+
         lines = [
             f"Here's your optimized schedule for {daily_plan.time_window.start_time} - {daily_plan.time_window.end_time}:\n"
         ]
@@ -375,12 +300,7 @@ class Orchestrator:
             )
 
         # Show constraints
-        if self.state.constraints:
-            constraint_labels = [c.button_label for c in self.state.constraints]
-            lines.append(f"\nConstraints: {', '.join(constraint_labels)}")
-        else:
-            lines.append("\nConstraints: None")
-
+        lines.append(f"\nConstraints: {self.constraint_set.describe()}")
         lines.append(f"Optimizer: {self.state.optimizer_type}")
         lines.append("\nYour day is planned!")
 
@@ -405,7 +325,7 @@ class Orchestrator:
         return tasks
 
 
-# Session storage for orchestrators (in production, use Redis or similar)
+# Session storage
 _sessions: dict[str, Orchestrator] = {}
 
 

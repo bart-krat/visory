@@ -1,33 +1,34 @@
 """Constraint clarification for the planning workflow.
 
-Handles user selection of optimization constraints.
-Supports both button-based task selection and custom text input.
+Handles user selection of optimization constraints via buttons.
+Converts selections to typed constraints for the optimizer.
 """
-from app.state import Constraint, Task, CustomConstraint
+from app.state import (
+    Task,
+    UIConstraint,
+    ConstraintSet,
+    MustIncludeTask,
+)
 
 
 class ConstraintClarification:
     """Handles constraint selection in the workflow.
 
-    Generates dynamic task-based options:
-    - TASK_<task_name> buttons for each task
-
-    Also supports custom text input which will be processed
-    via semantic matching.
+    Generates task-based button options and converts selections
+    to typed ConstraintSet for the optimizer.
 
     Usage:
         clarification = ConstraintClarification(tasks=state.tasks)
 
-        # Get options for UI
+        # Get options for UI buttons
         options = clarification.get_options_for_ui()
 
-        # Parse user response (button click or custom text)
-        result = clarification.parse_response(user_input)
-        # Returns Constraint for button clicks, CustomConstraint for text
+        # Convert button selections to typed constraints
+        constraints = clarification.selection_to_constraints(["TASK_Gym", "TASK_Run"])
     """
 
     def __init__(self, tasks: list[Task] | None = None):
-        """Initialize with tasks to generate dynamic options.
+        """Initialize with tasks to generate options.
 
         Args:
             tasks: List of tasks to generate task-specific options.
@@ -35,13 +36,12 @@ class ConstraintClarification:
         self.tasks = tasks or []
         self.options = self._build_options()
 
-    def _build_options(self) -> list[Constraint]:
-        """Build the list of task constraint options (buttons only)."""
+    def _build_options(self) -> list[UIConstraint]:
+        """Build the list of task constraint options (buttons)."""
         options = []
 
-        # Dynamic task options - one button per task
         for task in self.tasks:
-            options.append(Constraint(
+            options.append(UIConstraint(
                 id=f"TASK_{task.name}",
                 name=f"Include {task.name}",
                 description=f"Must include the task: {task.name}",
@@ -64,7 +64,7 @@ class ConstraintClarification:
         """Get options formatted for UI button rendering.
 
         Returns:
-            List of dicts with 'id', 'label', 'description' for each task option.
+            List of dicts with 'id', 'label', 'description' for each option.
         """
         return [
             {
@@ -75,50 +75,30 @@ class ConstraintClarification:
             for opt in self.options
         ]
 
-    def parse_response(self, user_input: str) -> Constraint | CustomConstraint | None:
-        """Parse user's constraint selection.
-
-        Accepts:
-        - Task constraint ID (e.g., "TASK_Go to gym")
-        - Option number (e.g., "1")
-        - Custom text describing constraints
+    def selection_to_constraints(self, selected_ids: list[str]) -> ConstraintSet:
+        """Convert button selections to typed constraints.
 
         Args:
-            user_input: The user's response text.
+            selected_ids: List of button IDs (e.g., ["TASK_Gym", "TASK_Run"])
 
         Returns:
-            Constraint for button selections,
-            CustomConstraint for custom text input,
-            None if input is empty.
+            ConstraintSet with typed constraints.
         """
-        user_input = user_input.strip()
-        if not user_input:
-            return None
+        cs = ConstraintSet()
 
-        # Try exact ID match for task constraints
-        for opt in self.options:
-            if user_input == opt.id or user_input.upper() == opt.id.upper():
-                return opt
+        for id in selected_ids:
+            if id.startswith("TASK_"):
+                task_name = id.replace("TASK_", "")
+                # Verify task exists
+                if any(t.name == task_name for t in self.tasks):
+                    cs.add(MustIncludeTask(task_name=task_name))
 
-        # Try number selection
-        if user_input.isdigit():
-            idx = int(user_input) - 1
-            if 0 <= idx < len(self.options):
-                return self.options[idx]
-
-        # Try partial match on button label
-        user_lower = user_input.lower()
-        for opt in self.options:
-            if user_lower in opt.button_label.lower():
-                return opt
-
-        # Not a button selection - treat as custom text constraint
-        return CustomConstraint(raw_text=user_input)
+        return cs
 
     def get_task_names(self) -> list[str]:
-        """Get list of available task names for matching."""
+        """Get list of available task names."""
         return [task.name for task in self.tasks]
 
     def get_categories(self) -> list[str]:
-        """Get list of available categories for matching."""
+        """Get list of available categories."""
         return list(set(task.category for task in self.tasks))

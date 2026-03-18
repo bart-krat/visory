@@ -1,120 +1,134 @@
+"""Optimizer router - selects and configures the appropriate optimizer."""
 from enum import Enum
 
-from app.state import Task, TimeWindow, DailyPlan
+from app.state import Task, TimeWindow, DailyPlan, ConstraintSet
 from app.optimize.base import BaseOptimizer
 from app.optimize.simple_optimizer import SimpleOptimizer
 from app.optimize.greedy_optimizer import GreedyOptimizer
 from app.optimize.knapsack_optimizer import KnapsackOptimizer
+from app.optimize.enumeration_optimizer import EnumerationOptimizer
 
 
 class OptimizerType(str, Enum):
-    SIMPLE = "simple"      # Orders by category: Health -> Work -> Personal
-    GREEDY = "greedy"      # Maximizes utility/time ratio
-    KNAPSACK = "knapsack"  # DP with flexible constraints
+    SIMPLE = "simple"          # Orders by category: Health -> Work -> Personal
+    GREEDY = "greedy"          # Maximizes utility/time ratio
+    KNAPSACK = "knapsack"      # DP with mandatory tasks/categories
+    ENUMERATION = "enumeration"  # Brute force optimal (tasks < 10, complex constraints)
 
 
 class OptimizerRouter:
     """Routes optimization requests to the appropriate optimizer.
 
-    Routing logic:
-    1. If total task duration fits in window → SimpleOptimizer
-       (No selection needed, just order tasks)
-
-    2. If duration > window AND no constraints → GreedyOptimizer
-       (Need to select tasks, greedy is fast and good enough)
-
-    3. If duration > window AND has constraints → KnapsackOptimizer
-       (Need optimal selection respecting constraints)
+    Accepts a ConstraintSet and selects the best optimizer based on:
+    - Number of tasks
+    - Types of constraints present
+    - Whether tasks fit in the time window
     """
 
     def __init__(self):
-        """Initialize router with default constraints."""
+        """Initialize router."""
         self._optimizers: dict[OptimizerType, BaseOptimizer] = {
             OptimizerType.SIMPLE: SimpleOptimizer(),
             OptimizerType.GREEDY: GreedyOptimizer(),
             OptimizerType.KNAPSACK: KnapsackOptimizer(),
+            OptimizerType.ENUMERATION: EnumerationOptimizer(),
         }
-
-        # Constraint settings for knapsack optimizer
-        self.mandatory_categories: set[str] | None = {"work", "personal", "health"}
-        self.mandatory_tasks: set[str] | None = None
-        self.fixed_slots: dict[str, int] | None = None  # {task_name: minute_of_day}
+        self._constraints = ConstraintSet()
 
     @property
-    def require_all_categories(self) -> bool:
-        """Backward compatible property."""
-        return self.mandatory_categories == {"work", "personal", "health"}
+    def constraints(self) -> ConstraintSet:
+        """Get current constraints."""
+        return self._constraints
 
-    @require_all_categories.setter
-    def require_all_categories(self, value: bool):
-        """Backward compatible setter."""
-        if value:
-            self.mandatory_categories = {"work", "personal", "health"}
-        else:
-            self.mandatory_categories = None
+    def set_constraints(self, constraints: ConstraintSet) -> None:
+        """Set constraints for optimization.
 
-    def has_constraints(self) -> bool:
-        """Check if any constraints are set."""
-        return bool(
-            self.mandatory_categories or
-            self.mandatory_tasks or
-            self.fixed_slots
-        )
+        Args:
+            constraints: ConstraintSet with typed constraints.
+        """
+        self._constraints = constraints
+
+    def clear_constraints(self) -> None:
+        """Clear all constraints."""
+        self._constraints = ConstraintSet()
 
     def optimize(
         self,
         tasks: list[Task],
         time_window: TimeWindow,
+        constraints: ConstraintSet | None = None,
         optimizer_type: OptimizerType | None = None,
     ) -> DailyPlan:
-        """Run optimization, auto-selecting optimizer if not specified.
+        """Run optimization with the given constraints.
 
         Args:
             tasks: Tasks to optimize.
             time_window: Available time window.
+            constraints: Constraints to apply. If None, uses stored constraints.
             optimizer_type: Force a specific optimizer. If None, auto-select.
 
         Returns:
             Optimized DailyPlan.
         """
+        # Use provided constraints or fall back to stored
+        cs = constraints if constraints is not None else self._constraints
+
+        # Auto-select optimizer if not specified
         if optimizer_type is None:
-            optimizer_type = self._select_optimizer(tasks, time_window)
+            optimizer_type = self._select_optimizer(tasks, time_window, cs)
 
         optimizer = self._optimizers[optimizer_type]
 
-        # KnapsackOptimizer accepts additional constraint parameters
+        # Route to appropriate optimizer with extracted constraints
         if optimizer_type == OptimizerType.KNAPSACK:
             return optimizer.optimize(
                 tasks,
                 time_window,
-                mandatory_tasks=self.mandatory_tasks,
-                mandatory_categories=self.mandatory_categories,
-                fixed_slots=self.fixed_slots,
+                mandatory_tasks=cs.mandatory_tasks or None,
+                mandatory_categories=cs.mandatory_categories or None,
             )
 
+        if optimizer_type == OptimizerType.ENUMERATION:
+            return optimizer.optimize(
+                tasks,
+                time_window,
+                mandatory_tasks=cs.mandatory_tasks or None,
+                mandatory_categories=cs.mandatory_categories or None,
+                fixed_slots=cs.fixed_slots or None,
+                ordering_constraints=cs.ordering_constraints or None,
+            )
+
+        # SIMPLE and GREEDY don't use constraints
         return optimizer.optimize(tasks, time_window)
 
     def _select_optimizer(
         self,
         tasks: list[Task],
         time_window: TimeWindow,
+        constraints: ConstraintSet,
     ) -> OptimizerType:
         """Auto-select the appropriate optimizer.
 
-        Logic:
-        1. Has fixed_slots → KNAPSACK (must respect time constraints)
+        Selection logic:
+        1. Complex constraints (fixed_slots, ordering) → ENUMERATION (if tasks < 10)
         2. Tasks fit in window → SIMPLE
-        3. Tasks don't fit + has constraints → KNAPSACK
-        4. Tasks don't fit + no constraints → GREEDY
+        3. Tasks overflow + has constraints → KNAPSACK
+        4. Tasks overflow + no constraints → GREEDY
         """
-        # Fixed slots require knapsack for time-aware scheduling
-        if self.fixed_slots:
-            return OptimizerType.KNAPSACK
+        num_tasks = len(tasks)
 
+        # Complex constraints require enumeration
+        if constraints.has_complex_constraints():
+            if num_tasks < 10:
+                return OptimizerType.ENUMERATION
+            else:
+                # Too many tasks - fall back to knapsack (ignores complex constraints)
+                return OptimizerType.KNAPSACK
+
+        # Check if tasks fit in window
         total_duration = sum(t.duration for t in tasks)
-        buffer_time = (len(tasks) - 1) * 5 if len(tasks) > 1 else 0
+        buffer_time = (num_tasks - 1) * 5 if num_tasks > 1 else 0
         total_with_buffer = total_duration + buffer_time
-
         available_minutes = self._time_window_minutes(time_window)
 
         # All tasks fit → just order them
@@ -122,7 +136,7 @@ class OptimizerRouter:
             return OptimizerType.SIMPLE
 
         # Tasks don't fit, need selection
-        if self.has_constraints():
+        if constraints.mandatory_tasks or constraints.mandatory_categories:
             return OptimizerType.KNAPSACK
         else:
             return OptimizerType.GREEDY
@@ -138,6 +152,7 @@ _router: OptimizerRouter | None = None
 
 
 def get_optimizer_router() -> OptimizerRouter:
+    """Get the global optimizer router instance."""
     global _router
     if _router is None:
         _router = OptimizerRouter()

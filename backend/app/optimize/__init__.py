@@ -4,6 +4,7 @@ from app.optimize.base import BaseOptimizer
 from app.optimize.simple_optimizer import SimpleOptimizer
 from app.optimize.greedy_optimizer import GreedyOptimizer
 from app.optimize.knapsack_optimizer import KnapsackOptimizer
+from app.optimize.enumeration_optimizer import EnumerationOptimizer
 from app.state import Task, ScheduledTask, DailyPlan
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "SimpleOptimizer",
     "GreedyOptimizer",
     "KnapsackOptimizer",
+    "EnumerationOptimizer",
     # Data types
     "Task",
     "ScheduledTask",

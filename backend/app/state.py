@@ -52,9 +52,135 @@ class DailyPlan:
     time_window: TimeWindow | None = None
 
 
+# =============================================================================
+# Typed Constraint Model
+# =============================================================================
+# These represent the actual constraint semantics that optimizers understand.
+
 @dataclass
-class Constraint:
-    """A user-selected optimization constraint."""
+class MustIncludeTask:
+    """Specific task must be included in the plan."""
+    task_name: str
+
+    def __str__(self) -> str:
+        return f"Must include '{self.task_name}'"
+
+
+@dataclass
+class MustIncludeCategory:
+    """At least one task from this category must be included."""
+    category: str  # "health", "work", or "personal"
+
+    def __str__(self) -> str:
+        return f"Must include a {self.category} task"
+
+
+@dataclass
+class FixedTimeSlot:
+    """Task must be scheduled at a specific time."""
+    task_name: str
+    start_time: int  # minutes from midnight (e.g., 840 = 14:00)
+
+    def __str__(self) -> str:
+        h, m = divmod(self.start_time, 60)
+        return f"'{self.task_name}' at {h:02d}:{m:02d}"
+
+
+@dataclass
+class OrderedAfter:
+    """Task must be scheduled after another task."""
+    task_name: str
+    after_task: str  # The task that must come before
+
+    def __str__(self) -> str:
+        return f"'{self.task_name}' after '{self.after_task}'"
+
+
+# Union of all constraint types
+ConstraintType = MustIncludeTask | MustIncludeCategory | FixedTimeSlot | OrderedAfter
+
+
+@dataclass
+class ConstraintSet:
+    """A collection of typed constraints with helper methods."""
+    constraints: list[ConstraintType] = field(default_factory=list)
+
+    def add(self, constraint: ConstraintType) -> None:
+        """Add a constraint to the set."""
+        self.constraints.append(constraint)
+
+    @property
+    def mandatory_tasks(self) -> set[str]:
+        """Extract mandatory task names."""
+        return {c.task_name for c in self.constraints if isinstance(c, MustIncludeTask)}
+
+    @property
+    def mandatory_categories(self) -> set[str]:
+        """Extract mandatory categories."""
+        return {c.category for c in self.constraints if isinstance(c, MustIncludeCategory)}
+
+    @property
+    def fixed_slots(self) -> dict[str, int]:
+        """Extract fixed time slots as {task_name: start_time}."""
+        return {c.task_name: c.start_time for c in self.constraints if isinstance(c, FixedTimeSlot)}
+
+    @property
+    def ordering_constraints(self) -> list[tuple[str, str]]:
+        """Extract ordering as [(before, after), ...]."""
+        return [(c.after_task, c.task_name) for c in self.constraints if isinstance(c, OrderedAfter)]
+
+    def has_complex_constraints(self) -> bool:
+        """Check if constraints require EnumerationOptimizer."""
+        return bool(self.fixed_slots or self.ordering_constraints)
+
+    def is_empty(self) -> bool:
+        """Check if there are no constraints."""
+        return len(self.constraints) == 0
+
+    def describe(self) -> str:
+        """Human-readable description of all constraints."""
+        if not self.constraints:
+            return "No constraints"
+        return "; ".join(str(c) for c in self.constraints)
+
+    def to_dict(self) -> list[dict]:
+        """Serialize constraints to JSON-compatible format."""
+        result = []
+        for c in self.constraints:
+            if isinstance(c, MustIncludeTask):
+                result.append({"type": "must_include_task", "task_name": c.task_name})
+            elif isinstance(c, MustIncludeCategory):
+                result.append({"type": "must_include_category", "category": c.category})
+            elif isinstance(c, FixedTimeSlot):
+                result.append({"type": "fixed_time_slot", "task_name": c.task_name, "start_time": c.start_time})
+            elif isinstance(c, OrderedAfter):
+                result.append({"type": "ordered_after", "task_name": c.task_name, "after_task": c.after_task})
+        return result
+
+    @classmethod
+    def from_dict(cls, data: list[dict]) -> "ConstraintSet":
+        """Deserialize constraints from JSON format."""
+        cs = cls()
+        for item in data:
+            ctype = item.get("type")
+            if ctype == "must_include_task":
+                cs.add(MustIncludeTask(task_name=item["task_name"]))
+            elif ctype == "must_include_category":
+                cs.add(MustIncludeCategory(category=item["category"]))
+            elif ctype == "fixed_time_slot":
+                cs.add(FixedTimeSlot(task_name=item["task_name"], start_time=item["start_time"]))
+            elif ctype == "ordered_after":
+                cs.add(OrderedAfter(task_name=item["task_name"], after_task=item["after_task"]))
+        return cs
+
+
+# =============================================================================
+# Legacy UI Constraint (for backward compatibility)
+# =============================================================================
+
+@dataclass
+class UIConstraint:
+    """A UI button representation of a constraint (legacy)."""
     id: str           # Unique identifier
     name: str         # Display name
     description: str  # What this constraint does
@@ -62,51 +188,17 @@ class Constraint:
 
 
 @dataclass
-class CustomConstraint:
-    """A custom text-based constraint from user input.
-
-    These constraints need semantic matching to be converted
-    to knapsack-compatible parameters.
-    """
-    raw_text: str  # The original user input
-    matched_tasks: list[str] = field(default_factory=list)  # Task names matched
-    matched_categories: list[str] = field(default_factory=list)  # Categories matched
-    is_matched: bool = False  # Whether semantic matching was successful
-    match_confidence: float = 0.0  # Confidence score of the match (0-1)
-    match_explanation: str = ""  # Explanation of how/why it was matched
-
-
-# Registry of available constraints - add new options here
-CONSTRAINTS: dict[str, Constraint] = {
-    "ALL_CATEGORIES": Constraint(
-        id="ALL_CATEGORIES",
-        name="All Categories",
-        description="At least one task from each category (health, work, personal) must be in the plan",
-        button_label="At least one of each category",
-    ),
-    "NONE": Constraint(
-        id="NONE",
-        name="No Constraints",
-        description="No specific constraints - optimize purely for utility",
-        button_label="No constraints",
-    ),
-}
-
-
-@dataclass
 class PlannerState:
     """Holds the state of the planning workflow."""
     session_id: str = ""
     current_phase: str = "questionnaire"
-    # Utility weights from questionnaire (work, health, personal summing to 300)
     utility_weights: dict[str, float] = field(default_factory=lambda: DEFAULT_UTILITY_WEIGHTS.copy())
-    questionnaire_answers: list[dict] = field(default_factory=list)  # Q&A history
+    questionnaire_answers: list[dict] = field(default_factory=list)
     raw_tasks: list[str] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     time_window: TimeWindow | None = None
-    constraints: list[Constraint] = field(default_factory=list)  # Multiple constraints
     daily_plan: DailyPlan | None = None
-    optimizer_type: str | None = None  # Which optimizer was selected
+    optimizer_type: str | None = None
     updated_at: str = ""
 
     def to_dict(self) -> dict:
@@ -120,7 +212,6 @@ class PlannerState:
             "raw_tasks": self.raw_tasks,
             "tasks": [asdict(t) for t in self.tasks],
             "time_window": asdict(self.time_window) if self.time_window else None,
-            "constraints": [asdict(c) for c in self.constraints],
             "optimizer_type": self.optimizer_type,
             "daily_plan": {
                 "schedule": [asdict(s) for s in self.daily_plan.schedule],
@@ -129,14 +220,7 @@ class PlannerState:
         }
 
     def save(self, directory: str = "state") -> Path:
-        """Persist state to JSON file.
-
-        Args:
-            directory: Directory to save state files.
-
-        Returns:
-            Path to the saved file.
-        """
+        """Persist state to JSON file."""
         self.updated_at = datetime.now().isoformat()
 
         dir_path = Path(directory)
@@ -166,19 +250,12 @@ class PlannerState:
             updated_at=data.get("updated_at", ""),
         )
 
-        # Reconstruct tasks
         for t in data.get("tasks", []):
             state.tasks.append(Task(**t))
 
-        # Reconstruct time_window
         if data.get("time_window"):
             state.time_window = TimeWindow(**data["time_window"])
 
-        # Reconstruct constraints
-        for c in data.get("constraints", []):
-            state.constraints.append(Constraint(**c))
-
-        # Reconstruct daily_plan
         if data.get("daily_plan"):
             dp = data["daily_plan"]
             state.daily_plan = DailyPlan(

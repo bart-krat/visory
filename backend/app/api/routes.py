@@ -1,3 +1,4 @@
+"""API routes for the Visory planning workflow."""
 import uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -99,6 +100,8 @@ def workflow_message(request: WorkflowMessageRequest):
 def submit_constraints(request: ConstraintsSubmission):
     """Submit task constraints (duration, time slots, time window)."""
     from app.state import TimeWindow
+    from app.constraints import ConstraintClarification
+    from app.orchestrator import WorkflowPhase
 
     orchestrator = get_orchestrator(request.session_id)
     if not orchestrator:
@@ -110,7 +113,6 @@ def submit_constraints(request: ConstraintsSubmission):
             if task.name == task_input.name:
                 task.duration = task_input.duration
                 if task_input.time_slot:
-                    # Convert "HH:MM" to minutes from midnight
                     h, m = map(int, task_input.time_slot.split(":"))
                     task.time_slot = h * 60 + m
                 break
@@ -121,12 +123,10 @@ def submit_constraints(request: ConstraintsSubmission):
         end_time=request.time_window_end,
     )
 
-    # Build constraint clarification with current tasks for dynamic options
-    from app.constraints import ConstraintClarification
+    # Build constraint clarification for button options
     orchestrator.constraint_clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
 
     # Advance to constraint clarification phase
-    from app.orchestrator import WorkflowPhase
     orchestrator.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
     orchestrator._persist_state()
 
@@ -139,7 +139,7 @@ def submit_constraints(request: ConstraintsSubmission):
 
 @router.get("/constraints/options/{session_id}")
 def get_constraint_options(session_id: str):
-    """Get available constraint options for UI based on session tasks.
+    """Get available constraint options for UI.
 
     Returns:
         - options: List of task constraint buttons
@@ -151,7 +151,6 @@ def get_constraint_options(session_id: str):
     if not orchestrator:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Build clarification with current tasks for dynamic options
     clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
     return {
         "options": clarification.get_options_for_ui(),
@@ -167,69 +166,32 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
     - constraint_ids: List of task constraint IDs (button selections)
     - custom_constraint: Free-form text describing constraints
     """
-    from app.constraints import ConstraintClarification, get_constraint_matcher
-    from app.state import CustomConstraint
-
     orchestrator = get_orchestrator(request.session_id)
     if not orchestrator:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    # Build clarification to parse constraint IDs
-    clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
-    router = orchestrator.optimizer_service.router
 
     output_chunks = []
 
     if request.custom_constraint:
         # Handle custom text constraint via semantic matching
-        custom = CustomConstraint(raw_text=request.custom_constraint)
-        matcher = get_constraint_matcher(orchestrator.state.tasks)
-        matched = matcher.match(custom)
+        constraint_set = orchestrator.apply_constraints_from_text(request.custom_constraint)
 
-        if matched.is_matched:
-            output_chunks.append(f"Understood: \"{custom.raw_text}\"\n")
-            output_chunks.append(f"{matched.match_explanation}\n\n")
-
-            # Apply matched constraints
-            router.mandatory_tasks = set(matched.matched_tasks) if matched.matched_tasks else None
-            router.mandatory_categories = set(matched.matched_categories) if matched.matched_categories else None
-
-            # Store for display
-            from app.state import Constraint
-            orchestrator.state.constraints = [Constraint(
-                id="CUSTOM",
-                name="Custom Constraint",
-                description=custom.raw_text,
-                button_label=matched.match_explanation,
-            )]
+        if not constraint_set.is_empty():
+            output_chunks.append(f"Understood: {constraint_set.describe()}\n\n")
         else:
-            output_chunks.append(f"Could not match: \"{custom.raw_text}\"\n")
-            output_chunks.append("Optimizing for maximum utility...\n\n")
-            router.mandatory_tasks = None
-            router.mandatory_categories = None
-            orchestrator.state.constraints = []
+            output_chunks.append("No specific constraints found. Optimizing for maximum utility...\n\n")
 
     elif request.constraint_ids:
         # Handle button-selected task constraints
-        constraints = []
-        for constraint_id in request.constraint_ids:
-            constraint = clarification.parse_response(constraint_id)
-            if constraint and not isinstance(constraint, CustomConstraint):
-                constraints.append(constraint)
+        orchestrator.apply_constraints_from_ids(request.constraint_ids)
 
-        if constraints:
-            orchestrator.apply_constraints(constraints)
-        else:
-            # No valid constraints - optimize without
-            router.mandatory_tasks = None
-            router.mandatory_categories = None
-            orchestrator.state.constraints = []
+        if not orchestrator.constraint_set.is_empty():
+            output_chunks.append(f"Applying: {orchestrator.constraint_set.describe()}\n\n")
 
     else:
-        # No constraints specified - optimize without
-        router.mandatory_tasks = None
-        router.mandatory_categories = None
-        orchestrator.state.constraints = []
+        # No constraints specified
+        orchestrator.constraint_set.constraints.clear()
+        output_chunks.append("No constraints. Optimizing for maximum utility...\n\n")
 
     # Run optimization
     for chunk in orchestrator.run_optimization():
@@ -251,7 +213,7 @@ def workflow_state(session_id: str):
 
     state = orchestrator.get_state()
 
-    # Get questionnaire progress if in that phase
+    # Get questionnaire progress
     questionnaire_progress = None
     if orchestrator.questionnaire:
         questionnaire_progress = {
@@ -280,14 +242,7 @@ def workflow_state(session_id: str):
             "start_time": state.time_window.start_time,
             "end_time": state.time_window.end_time,
         } if state.time_window else None,
-        "constraints": [
-            {
-                "id": c.id,
-                "name": c.name,
-                "description": c.description,
-            }
-            for c in state.constraints
-        ],
+        "constraints": orchestrator.constraint_set.to_dict(),
         "optimizer_type": state.optimizer_type,
         "daily_plan": {
             "schedule": [
