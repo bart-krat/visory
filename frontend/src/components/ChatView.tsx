@@ -18,6 +18,9 @@ export default function ChatView() {
   const [constraintOptions, setConstraintOptions] = useState<ConstraintOption[]>([])
   const [selectedConstraints, setSelectedConstraints] = useState<Set<string>>(new Set())
 
+  // Questionnaire progress
+  const [questionnaireProgress, setQuestionnaireProgress] = useState<{current: number, total: number} | null>(null)
+
   // Constraints table state
   const [tasksForConstraints, setTasksForConstraints] = useState<TaskForConstraints[]>([])
   const [timeWindowStart, setTimeWindowStart] = useState('09:00')
@@ -89,6 +92,9 @@ export default function ChatView() {
       const res = await fetch(`/api/workflow/${sessionId}/state`)
       const data = await res.json()
       setPhase(data.phase)
+      if (data.questionnaire_progress) {
+        setQuestionnaireProgress(data.questionnaire_progress)
+      }
     } catch {
       console.error('Failed to fetch workflow state')
     }
@@ -274,11 +280,47 @@ export default function ChatView() {
     return { health: '💪', work: '💼', leisure: '🎮' }[category] || '📌'
   }
 
+  const getPhaseLabel = () => {
+    const labels: Record<string, string> = {
+      'questionnaire': 'Values Assessment',
+      'evaluation': 'Analyzing...',
+      'collect_tasks': 'Task Collection',
+      'constraints': 'Time Constraints',
+      'constraint_clarification': 'Optimization Preferences',
+      'optimize': 'Optimizing...',
+      'complete': 'Complete',
+    }
+    return labels[phase] || phase
+  }
+
   return (
     <div>
       {phase && (
-        <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>
-          Phase: {phase}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+            Phase: {getPhaseLabel()}
+          </div>
+          {/* Questionnaire progress bar */}
+          {(phase === 'questionnaire' || phase === 'evaluation') && questionnaireProgress && (
+            <div style={{ marginTop: 4 }}>
+              <div style={{
+                height: 6,
+                background: '#e9ecef',
+                borderRadius: 3,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${(questionnaireProgress.current / questionnaireProgress.total) * 100}%`,
+                  background: '#007bff',
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+              <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                Question {questionnaireProgress.current} of {questionnaireProgress.total}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div style={{ border: '1px solid #ccc', borderRadius: 8, padding: 16, minHeight: 300, marginBottom: 16 }}>
@@ -522,29 +564,30 @@ export default function ChatView() {
         </div>
       )}
 
-      {/* Text input - hide during constraints phase */}
-      {phase !== 'constraints' && (
+      {/* Text input - show during questionnaire and collect_tasks phases */}
+      {['questionnaire', 'collect_tasks'].includes(phase) && (
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && send()}
-            placeholder="Type your message..."
+            onKeyDown={e => e.key === 'Enter' && !loading && send()}
+            placeholder={phase === 'questionnaire' ? "Type your answer..." : "Type your tasks..."}
             style={{ flex: 1, padding: 12, borderRadius: 8, border: '1px solid #ccc' }}
+            disabled={loading}
           />
           <button
             onClick={() => send()}
-            disabled={loading || !sessionId}
+            disabled={loading || !sessionId || !input.trim()}
             style={{
               padding: '12px 24px',
               borderRadius: 8,
-              background: loading ? '#ccc' : '#007bff',
+              background: loading || !input.trim() ? '#ccc' : '#007bff',
               color: '#fff',
               border: 'none',
-              cursor: loading ? 'default' : 'pointer'
+              cursor: loading || !input.trim() ? 'default' : 'pointer'
             }}
           >
-            Send
+            {loading ? '...' : 'Send'}
           </button>
         </div>
       )}
