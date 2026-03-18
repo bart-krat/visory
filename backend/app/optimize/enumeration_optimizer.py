@@ -137,16 +137,25 @@ class EnumerationOptimizer(BaseOptimizer):
                 for perm in permutations(subset_list):
                     perm_list = list(perm)
 
-                    # Check ordering constraints
-                    if not self._satisfies_ordering(perm_list, ordering_constraints):
-                        continue
-
                     # Try to schedule this permutation
                     schedule = self._try_schedule(perm_list, gaps)
-                    if schedule is not None:
-                        best_utility = subset_utility
-                        best_flexible_schedule = schedule
-                        break  # Found valid schedule for this subset
+                    if schedule is None:
+                        continue
+
+                    # Check ordering constraints against FULL schedule (fixed + flexible)
+                    full_schedule = []
+                    for task, slot_start in fixed_tasks:
+                        full_schedule.append((task.name, slot_start))
+                    for st in schedule:
+                        start_mins = int(st.start_time.split(":")[0]) * 60 + int(st.start_time.split(":")[1])
+                        full_schedule.append((st.task, start_mins))
+
+                    if not self._satisfies_ordering_with_times(full_schedule, ordering_constraints):
+                        continue
+
+                    best_utility = subset_utility
+                    best_flexible_schedule = schedule
+                    break  # Found valid schedule for this subset
 
         if best_flexible_schedule is None and remaining_mandatory_tasks:
             # Can't satisfy constraints
@@ -280,3 +289,34 @@ class EnumerationOptimizer(BaseOptimizer):
             end_time=f"{end_minute // 60:02d}:{end_minute % 60:02d}",
             duration_minutes=task.duration,
         )
+
+    def _satisfies_ordering_with_times(
+        self,
+        scheduled: list[tuple[str, int]],
+        ordering_constraints: list[tuple[str, str]],
+    ) -> bool:
+        """Check ordering constraints using actual scheduled times.
+
+        Args:
+            scheduled: List of (task_name, start_minute) for ALL tasks (fixed + flexible).
+            ordering_constraints: List of (before, after) task name pairs.
+
+        Returns:
+            True if all ordering constraints are satisfied.
+        """
+        if not ordering_constraints:
+            return True
+
+        # Build time map: task_name -> start_minute
+        time_map = {name: start for name, start in scheduled}
+
+        for before, after in ordering_constraints:
+            # Both tasks must be scheduled for constraint to apply
+            if before not in time_map or after not in time_map:
+                continue
+
+            # "before" task must start earlier than "after" task
+            if time_map[before] >= time_map[after]:
+                return False
+
+        return True
