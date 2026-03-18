@@ -107,11 +107,10 @@ class EnumerationOptimizer(BaseOptimizer):
         remaining_mandatory_tasks = mandatory_tasks - fixed_task_names
         remaining_mandatory_categories = mandatory_categories - fixed_categories
 
-        # Find best schedule for flexible tasks
-        best_utility = float("-inf")
-        best_flexible_schedule = None
+        # Generate all valid subsets with their utilities
+        # A valid subset must contain all mandatory tasks and categories
+        valid_subsets = []
 
-        # Try all subsets of flexible tasks
         for subset_size in range(len(flexible_tasks) + 1):
             for subset in combinations(flexible_tasks, subset_size):
                 subset_list = list(subset)
@@ -126,36 +125,45 @@ class EnumerationOptimizer(BaseOptimizer):
                 if not remaining_mandatory_categories <= subset_categories:
                     continue
 
-                # Calculate utility for this subset
+                # Calculate utility and store
                 subset_utility = sum(t.utility for t in subset_list)
+                valid_subsets.append((subset_list, subset_utility))
 
-                # Prune: skip if can't beat current best
-                if subset_utility <= best_utility:
+        # Sort by utility DESCENDING - highest utility first
+        valid_subsets.sort(key=lambda x: -x[1])
+
+        # Try subsets in order of decreasing utility
+        # FIRST valid solution is GUARANTEED optimal
+        best_flexible_schedule = None
+
+        for subset_list, subset_utility in valid_subsets:
+            # Try all permutations of this subset
+            for perm in permutations(subset_list):
+                perm_list = list(perm)
+
+                # Try to schedule this permutation
+                schedule = self._try_schedule(perm_list, gaps)
+                if schedule is None:
                     continue
 
-                # Try all permutations of this subset
-                for perm in permutations(subset_list):
-                    perm_list = list(perm)
+                # Check ordering constraints against FULL schedule (fixed + flexible)
+                full_schedule = []
+                for task, slot_start in fixed_tasks:
+                    full_schedule.append((task.name, slot_start))
+                for st in schedule:
+                    start_mins = int(st.start_time.split(":")[0]) * 60 + int(st.start_time.split(":")[1])
+                    full_schedule.append((st.task, start_mins))
 
-                    # Try to schedule this permutation
-                    schedule = self._try_schedule(perm_list, gaps)
-                    if schedule is None:
-                        continue
+                if not self._satisfies_ordering_with_times(full_schedule, ordering_constraints):
+                    continue
 
-                    # Check ordering constraints against FULL schedule (fixed + flexible)
-                    full_schedule = []
-                    for task, slot_start in fixed_tasks:
-                        full_schedule.append((task.name, slot_start))
-                    for st in schedule:
-                        start_mins = int(st.start_time.split(":")[0]) * 60 + int(st.start_time.split(":")[1])
-                        full_schedule.append((st.task, start_mins))
+                # FOUND! First valid = optimal (sorted by utility desc)
+                best_flexible_schedule = schedule
+                break
 
-                    if not self._satisfies_ordering_with_times(full_schedule, ordering_constraints):
-                        continue
-
-                    best_utility = subset_utility
-                    best_flexible_schedule = schedule
-                    break  # Found valid schedule for this subset
+            # If we found a valid schedule, stop searching
+            if best_flexible_schedule is not None:
+                break
 
         if best_flexible_schedule is None and remaining_mandatory_tasks:
             # Can't satisfy constraints

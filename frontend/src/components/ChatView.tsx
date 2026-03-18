@@ -19,7 +19,7 @@ export default function ChatView() {
   const [constraintOptions, setConstraintOptions] = useState<ConstraintOption[]>([])
   const [selectedConstraints, setSelectedConstraints] = useState<Set<string>>(new Set())
   const [supportsCustomText, setSupportsCustomText] = useState(false)
-  const [customConstraintText, setCustomConstraintText] = useState('')
+  const [customConstraints, setCustomConstraints] = useState<string[]>([''])
 
   // Questionnaire progress
   const [questionnaireProgress, setQuestionnaireProgress] = useState<{current: number, total: number} | null>(null)
@@ -109,7 +109,7 @@ export default function ChatView() {
           setConstraintOptions(data.options || [])
           setSupportsCustomText(data.supports_custom_text || false)
           setSelectedConstraints(new Set())
-          setCustomConstraintText('')
+          setCustomConstraints([''])
         } catch {
           console.error('Failed to fetch constraint options')
         }
@@ -119,7 +119,7 @@ export default function ChatView() {
       setConstraintOptions([])
       setSupportsCustomText(false)
       setSelectedConstraints(new Set())
-      setCustomConstraintText('')
+      setCustomConstraints([''])
     }
   }, [phase, sessionId])
 
@@ -207,9 +207,9 @@ export default function ChatView() {
   }
 
   const toggleConstraint = (optionId: string) => {
-    // Clear custom text when selecting buttons
-    if (customConstraintText.trim()) {
-      setCustomConstraintText('')
+    // Clear custom constraints when selecting buttons
+    if (customConstraints.some(c => c.trim())) {
+      setCustomConstraints([''])
     }
     setSelectedConstraints(prev => {
       const newSet = new Set(prev)
@@ -226,7 +226,10 @@ export default function ChatView() {
     if (!sessionId) return
 
     const constraintIds = Array.from(selectedConstraints)
-    const hasCustomText = customConstraintText.trim().length > 0
+    // Filter out empty constraints and join with semicolon
+    const validConstraints = customConstraints.filter(c => c.trim().length > 0)
+    const combinedConstraintText = validConstraints.join('; ')
+    const hasCustomText = validConstraints.length > 0
     const hasButtonSelection = constraintIds.length > 0
 
     // Need at least one constraint type
@@ -243,7 +246,7 @@ export default function ChatView() {
         body: JSON.stringify({
           session_id: sessionId,
           constraint_ids: constraintIds,
-          custom_constraint: hasCustomText ? customConstraintText.trim() : null,
+          custom_constraint: hasCustomText ? combinedConstraintText : null,
         })
       })
 
@@ -252,7 +255,11 @@ export default function ChatView() {
       // Show what the user selected
       let userMessage = ''
       if (hasCustomText) {
-        userMessage = `Constraint: "${customConstraintText.trim()}"`
+        if (validConstraints.length === 1) {
+          userMessage = `Constraint: "${validConstraints[0].trim()}"`
+        } else {
+          userMessage = `Constraints:\n${validConstraints.map(c => `  - ${c.trim()}`).join('\n')}`
+        }
       } else if (hasButtonSelection) {
         const constraintLabels = constraintOptions
           .filter(opt => selectedConstraints.has(opt.id))
@@ -272,7 +279,7 @@ export default function ChatView() {
       setPhase(data.phase)
       setSelectedConstraints(new Set())
       setConstraintOptions([])
-      setCustomConstraintText('')
+      setCustomConstraints([''])
 
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error running optimization' }])
@@ -564,33 +571,96 @@ export default function ChatView() {
             How would you like to optimize your schedule?
           </div>
 
-          {/* Custom text input */}
+          {/* Custom text inputs */}
           {supportsCustomText && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
                 Describe your requirements in your own words:
               </div>
-              <textarea
-                value={customConstraintText}
-                onChange={e => {
-                  setCustomConstraintText(e.target.value)
-                  // Clear button selections when typing custom text
-                  if (e.target.value.trim() && selectedConstraints.size > 0) {
-                    setSelectedConstraints(new Set())
-                  }
-                }}
-                placeholder='e.g., "I need to do at least one workout" or "Make sure I attend the meeting"'
-                style={{
-                  width: '100%',
-                  padding: 12,
-                  borderRadius: 8,
-                  border: '1px solid #ccc',
-                  fontSize: 14,
-                  minHeight: 60,
-                  resize: 'vertical',
-                  boxSizing: 'border-box',
-                }}
-              />
+              {customConstraints.map((constraint, index) => (
+                <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <input
+                    type="text"
+                    value={constraint}
+                    onChange={e => {
+                      const newConstraints = [...customConstraints]
+                      newConstraints[index] = e.target.value
+                      setCustomConstraints(newConstraints)
+                      // Clear button selections when typing custom text
+                      if (e.target.value.trim() && selectedConstraints.size > 0) {
+                        setSelectedConstraints(new Set())
+                      }
+                    }}
+                    placeholder={index === 0
+                      ? 'e.g., "gym before lunch" or "must include meeting"'
+                      : 'Add another constraint...'
+                    }
+                    style={{
+                      flex: 1,
+                      padding: 12,
+                      borderRadius: 8,
+                      border: '1px solid #ccc',
+                      fontSize: 14,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  {/* Remove button (show if more than one constraint) */}
+                  {customConstraints.length > 1 && (
+                    <button
+                      onClick={() => {
+                        const newConstraints = customConstraints.filter((_, i) => i !== index)
+                        setCustomConstraints(newConstraints)
+                      }}
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 8,
+                        border: '1px solid #dc3545',
+                        background: '#fff',
+                        color: '#dc3545',
+                        cursor: 'pointer',
+                        fontSize: 18,
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      title="Remove constraint"
+                    >
+                      -
+                    </button>
+                  )}
+                  {/* Add button (show only on last row) */}
+                  {index === customConstraints.length - 1 && (
+                    <button
+                      onClick={() => setCustomConstraints([...customConstraints, ''])}
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 8,
+                        border: '1px solid #28a745',
+                        background: '#fff',
+                        color: '#28a745',
+                        cursor: 'pointer',
+                        fontSize: 18,
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      title="Add another constraint"
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                {customConstraints.filter(c => c.trim()).length > 0
+                  ? `${customConstraints.filter(c => c.trim()).length} constraint${customConstraints.filter(c => c.trim()).length > 1 ? 's' : ''} entered`
+                  : 'Click + to add multiple constraints'
+                }
+              </div>
             </div>
           )}
 
@@ -645,10 +715,10 @@ export default function ChatView() {
             >
               Run Optimization
             </button>
-            {(selectedConstraints.size > 0 || customConstraintText.trim()) && (
+            {(selectedConstraints.size > 0 || customConstraints.some(c => c.trim())) && (
               <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>
-                {customConstraintText.trim()
-                  ? 'Custom constraint'
+                {customConstraints.some(c => c.trim())
+                  ? `${customConstraints.filter(c => c.trim()).length} custom constraint${customConstraints.filter(c => c.trim()).length > 1 ? 's' : ''}`
                   : `${selectedConstraints.size} task${selectedConstraints.size > 1 ? 's' : ''} selected`}
               </span>
             )}
