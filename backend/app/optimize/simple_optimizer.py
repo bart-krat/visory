@@ -5,12 +5,12 @@ from app.optimize.base import BaseOptimizer
 class SimpleOptimizer(BaseOptimizer):
     """Simple optimizer that orders tasks by category priority.
 
-    Orders tasks as: Health -> Work -> Leisure
+    Orders tasks as: Health -> Work -> Personal
     Schedules all tasks sequentially with buffer time between them.
     No selection logic - includes all tasks that fit.
     """
 
-    CATEGORY_ORDER = {"health": 0, "work": 1, "leisure": 2}
+    CATEGORY_ORDER = {"health": 0, "work": 1, "personal": 2}
 
     def __init__(self, buffer_minutes: int = 5):
         self.buffer_minutes = buffer_minutes
@@ -23,7 +23,7 @@ class SimpleOptimizer(BaseOptimizer):
         if not tasks:
             return DailyPlan(schedule=[], time_window=time_window)
 
-        # Sort by category: health, work, leisure
+        # Sort by category: health, work, personal
         sorted_tasks = sorted(
             tasks,
             key=lambda t: self.CATEGORY_ORDER.get(t.category, 2),

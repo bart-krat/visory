@@ -8,7 +8,7 @@ from app.optimize.knapsack_optimizer import KnapsackOptimizer
 
 
 class OptimizerType(str, Enum):
-    SIMPLE = "simple"      # Orders by category: Health -> Work -> Leisure
+    SIMPLE = "simple"      # Orders by category: Health -> Work -> Personal
     GREEDY = "greedy"      # Maximizes utility/time ratio
     KNAPSACK = "knapsack"  # DP with flexible constraints
 
@@ -36,20 +36,20 @@ class OptimizerRouter:
         }
 
         # Constraint settings for knapsack optimizer
-        self.mandatory_categories: set[str] | None = {"work", "leisure", "health"}
+        self.mandatory_categories: set[str] | None = {"work", "personal", "health"}
         self.mandatory_tasks: set[str] | None = None
         self.fixed_slots: dict[str, int] | None = None  # {task_name: minute_of_day}
 
     @property
     def require_all_categories(self) -> bool:
         """Backward compatible property."""
-        return self.mandatory_categories == {"work", "leisure", "health"}
+        return self.mandatory_categories == {"work", "personal", "health"}
 
     @require_all_categories.setter
     def require_all_categories(self, value: bool):
         """Backward compatible setter."""
         if value:
-            self.mandatory_categories = {"work", "leisure", "health"}
+            self.mandatory_categories = {"work", "personal", "health"}
         else:
             self.mandatory_categories = None
 

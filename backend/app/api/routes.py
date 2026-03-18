@@ -46,7 +46,7 @@ def chat(message: ChatMessage):
 
 @router.post("/categorize", response_model=CategorizeResponse)
 def categorize(request: CategorizeRequest):
-    """Categorize tasks into work, health, or leisure."""
+    """Categorize tasks into work, health, or personal."""
     try:
         service = get_categorize_service()
         result = service.categorize(request.tasks)
@@ -198,8 +198,21 @@ def workflow_state(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
 
     state = orchestrator.get_state()
+
+    # Get questionnaire progress if in that phase
+    questionnaire_progress = None
+    if orchestrator.questionnaire:
+        questionnaire_progress = {
+            "current": orchestrator.questionnaire.get_question_number(),
+            "total": orchestrator.questionnaire.get_total_questions(),
+            "is_complete": orchestrator.questionnaire.is_complete(),
+        }
+
     return {
         "phase": orchestrator.get_phase().value,
+        "utility_weights": state.utility_weights,
+        "questionnaire_progress": questionnaire_progress,
+        "questionnaire_answers": state.questionnaire_answers,
         "raw_tasks": state.raw_tasks,
         "tasks": [
             {

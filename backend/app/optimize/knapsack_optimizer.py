@@ -210,7 +210,7 @@ class KnapsackOptimizer(BaseOptimizer):
     ) -> list[ScheduledTask]:
         """Schedule selected tasks into available gaps."""
         # Sort tasks by category priority for nice ordering
-        category_order = {"health": 0, "work": 1, "leisure": 2}
+        category_order = {"health": 0, "work": 1, "personal": 2}
         sorted_tasks = sorted(tasks, key=lambda t: category_order.get(t.category, 2))
 
         scheduled = []

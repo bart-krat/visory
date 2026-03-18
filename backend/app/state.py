@@ -4,11 +4,11 @@ from pathlib import Path
 from datetime import datetime
 
 
-# Utility mapping by category
-CATEGORY_UTILITY = {
-    "health": 70.0,
-    "work": 80.0,
-    "leisure": 85.0,
+# Default utility mapping by category (used if questionnaire skipped)
+DEFAULT_UTILITY_WEIGHTS = {
+    "health": 100.0,
+    "work": 100.0,
+    "personal": 100.0,
 }
 
 
@@ -22,7 +22,7 @@ class Task:
     3. Optimizer: uses complete task for scheduling
     """
     name: str
-    category: str  # "work", "health", or "leisure"
+    category: str  # "work", "health", or "personal"
     utility: float = 0.0
     duration: int = 0  # in minutes, filled by constraints phase
     time_slot: int | None = None  # optional fixed start time (minutes from midnight)
@@ -66,7 +66,7 @@ CONSTRAINTS: dict[str, Constraint] = {
     "ALL_CATEGORIES": Constraint(
         id="ALL_CATEGORIES",
         name="All Categories",
-        description="At least one task from each category (health, work, leisure) must be in the plan",
+        description="At least one task from each category (health, work, personal) must be in the plan",
         button_label="At least one of each category",
     ),
     "NONE": Constraint(
@@ -82,7 +82,10 @@ CONSTRAINTS: dict[str, Constraint] = {
 class PlannerState:
     """Holds the state of the planning workflow."""
     session_id: str = ""
-    current_phase: str = "collect_tasks"
+    current_phase: str = "questionnaire"
+    # Utility weights from questionnaire (work, health, personal summing to 300)
+    utility_weights: dict[str, float] = field(default_factory=lambda: DEFAULT_UTILITY_WEIGHTS.copy())
+    questionnaire_answers: list[dict] = field(default_factory=list)  # Q&A history
     raw_tasks: list[str] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     time_window: TimeWindow | None = None
@@ -97,6 +100,8 @@ class PlannerState:
             "session_id": self.session_id,
             "current_phase": self.current_phase,
             "updated_at": self.updated_at,
+            "utility_weights": self.utility_weights,
+            "questionnaire_answers": self.questionnaire_answers,
             "raw_tasks": self.raw_tasks,
             "tasks": [asdict(t) for t in self.tasks],
             "time_window": asdict(self.time_window) if self.time_window else None,
@@ -138,7 +143,9 @@ class PlannerState:
 
         state = cls(
             session_id=data.get("session_id", ""),
-            current_phase=data.get("current_phase", "collect_tasks"),
+            current_phase=data.get("current_phase", "questionnaire"),
+            utility_weights=data.get("utility_weights", DEFAULT_UTILITY_WEIGHTS.copy()),
+            questionnaire_answers=data.get("questionnaire_answers", []),
             raw_tasks=data.get("raw_tasks", []),
             optimizer_type=data.get("optimizer_type"),
             updated_at=data.get("updated_at", ""),

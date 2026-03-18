@@ -1,5 +1,5 @@
 """Test the three optimizers with a sample task set."""
-from app.state import Task, TimeWindow, CATEGORY_UTILITY
+from app.state import Task, TimeWindow, DEFAULT_UTILITY_WEIGHTS
 from app.optimize import (
     SimpleOptimizer,
     GreedyOptimizer,
@@ -10,12 +10,12 @@ from app.optimize import (
 
 # Test data set (simulating tasks after categorize + constraints phases)
 TASKS = [
-    Task(name="go for run", category="health", utility=CATEGORY_UTILITY["health"], duration=60),
-    Task(name="cost report", category="work", utility=CATEGORY_UTILITY["work"], duration=120),
-    Task(name="movies", category="leisure", utility=CATEGORY_UTILITY["leisure"], duration=180),
-    Task(name="go to gym", category="health", utility=CATEGORY_UTILITY["health"], duration=90),
-    Task(name="meet boss", category="work", utility=CATEGORY_UTILITY["work"], duration=60),
-    Task(name="read a book", category="leisure", utility=CATEGORY_UTILITY["leisure"], duration=120),
+    Task(name="go for run", category="health", utility=DEFAULT_UTILITY_WEIGHTS["health"], duration=60),
+    Task(name="cost report", category="work", utility=DEFAULT_UTILITY_WEIGHTS["work"], duration=120),
+    Task(name="movies", category="personal", utility=DEFAULT_UTILITY_WEIGHTS["personal"], duration=180),
+    Task(name="go to gym", category="health", utility=DEFAULT_UTILITY_WEIGHTS["health"], duration=90),
+    Task(name="meet boss", category="work", utility=DEFAULT_UTILITY_WEIGHTS["work"], duration=60),
+    Task(name="read a book", category="personal", utility=DEFAULT_UTILITY_WEIGHTS["personal"], duration=120),
 ]
 
 # 8 hour window (9am to 5pm)
@@ -51,7 +51,7 @@ def test_simple_optimizer():
     """Test SimpleOptimizer - orders by category priority."""
     optimizer = SimpleOptimizer()
     plan = optimizer.optimize(TASKS, TIME_WINDOW)
-    print_plan("SimpleOptimizer (Health → Work → Leisure)", plan)
+    print_plan("SimpleOptimizer (Health → Work → Personal)", plan)
 
 
 def test_greedy_optimizer():
@@ -76,7 +76,7 @@ def test_knapsack_optimizer():
     categories = {t.category for t in plan.schedule}
     assert "health" in categories, "Missing health task"
     assert "work" in categories, "Missing work task"
-    assert "leisure" in categories, "Missing leisure task"
+    assert "personal" in categories, "Missing personal task"
     print("\n  ✓ All required categories covered")
 
 
@@ -88,7 +88,7 @@ def test_knapsack_tight_window():
     print_plan("KnapsackOptimizer (4-hour window)", plan)
 
     categories = {t.category for t in plan.schedule}
-    if {"health", "work", "leisure"} <= categories:
+    if {"health", "work", "personal"} <= categories:
         print("\n  ✓ All categories covered despite tight window")
     else:
         print(f"\n  ✗ Could not cover all categories: {categories}")

@@ -46,7 +46,7 @@ class GreedyOptimizer(BaseOptimizer):
                 remaining_time -= 5
 
         # Sort selected tasks by category priority for scheduling
-        category_order = {"health": 0, "work": 1, "leisure": 2}
+        category_order = {"health": 0, "work": 1, "personal": 2}
         selected.sort(key=lambda t: category_order.get(t.category, 2))
 
         return self._schedule_tasks(selected, time_window)

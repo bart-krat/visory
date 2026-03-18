@@ -33,7 +33,7 @@ class CategorizedTask(BaseModel):
     """A single categorized task."""
 
     task: str
-    category: str  # "work", "health", or "leisure"
+    category: str  # "work", "health", or "personal"
 
 
 class CategorizeResponse(BaseModel):
@@ -63,7 +63,7 @@ class Task(BaseModel):
     name: str
     duration: int  # in minutes
     utility: float
-    category: str  # "work", "health", or "leisure"
+    category: str  # "work", "health", or "personal"
     time_slot: int | None = None  # optional fixed start time (minutes from midnight)
 
 

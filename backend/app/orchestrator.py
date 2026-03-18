@@ -3,9 +3,12 @@ from app.state import PlannerState, CONSTRAINTS
 from app.categorize import get_categorize_service
 from app.constraints import get_constraints_service, ConstraintClarification
 from app.optimize import get_optimizer_service
+from app.utility import UtilityQuestionnaire, QUESTIONS
 
 
 class WorkflowPhase(str, Enum):
+    QUESTIONNAIRE = "questionnaire"
+    EVALUATION = "evaluation"
     COLLECT_TASKS = "collect_tasks"
     CONSTRAINTS = "constraints"
     CONSTRAINT_CLARIFICATION = "constraint_clarification"
@@ -13,7 +16,13 @@ class WorkflowPhase(str, Enum):
     COMPLETE = "complete"
 
 
-INITIAL_MESSAGE = "What tasks do you have on the agenda today?"
+WELCOME_MESSAGE = """Welcome to Visory! I'll help you plan your perfect day.
+
+First, let me understand what matters most to you by asking a few questions about your values and priorities.
+
+"""
+
+TASKS_MESSAGE = "Great! Now, what tasks do you have on the agenda today?"
 
 
 class Orchestrator:
@@ -22,8 +31,9 @@ class Orchestrator:
     def __init__(self, session_id: str = ""):
         self.session_id = session_id
         self.state = PlannerState(session_id=session_id)
-        self.phase = WorkflowPhase.COLLECT_TASKS
+        self.phase = WorkflowPhase.QUESTIONNAIRE
         self.conversation_history: list[dict] = []
+        self.questionnaire = UtilityQuestionnaire()
         self.categorize_service = get_categorize_service()
         self.constraints_service = get_constraints_service()
         self.constraint_clarification: ConstraintClarification | None = None  # Built dynamically with tasks
@@ -43,10 +53,15 @@ class Orchestrator:
         return self.phase
 
     def start(self) -> str:
-        """Start the workflow, return initial message."""
-        self.phase = WorkflowPhase.COLLECT_TASKS
+        """Start the workflow, return initial message with first question."""
+        self.phase = WorkflowPhase.QUESTIONNAIRE
         self._persist_state()
-        return INITIAL_MESSAGE
+
+        first_question = self.questionnaire.get_current_question()
+        q_num = self.questionnaire.get_question_number()
+        total = self.questionnaire.get_total_questions()
+
+        return f"{WELCOME_MESSAGE}Question {q_num}/{total}: {first_question}"
 
     def process_message(self, user_message: str):
         """Process a user message based on current phase.
@@ -59,7 +74,13 @@ class Orchestrator:
         """
         self.conversation_history.append({"role": "user", "content": user_message})
 
-        if self.phase == WorkflowPhase.COLLECT_TASKS:
+        if self.phase == WorkflowPhase.QUESTIONNAIRE:
+            yield from self._handle_questionnaire(user_message)
+
+        elif self.phase == WorkflowPhase.EVALUATION:
+            yield from self._handle_evaluation()
+
+        elif self.phase == WorkflowPhase.COLLECT_TASKS:
             yield from self._handle_collect_tasks(user_message)
 
         elif self.phase == WorkflowPhase.CONSTRAINTS:
@@ -71,13 +92,80 @@ class Orchestrator:
         elif self.phase == WorkflowPhase.OPTIMIZE:
             yield from self._handle_optimize()
 
+    def _handle_questionnaire(self, user_message: str):
+        """Handle the questionnaire phase - ask questions one at a time."""
+        # Store the answer
+        current_q = self.questionnaire.get_current_question()
+        self.state.questionnaire_answers.append({
+            "question": current_q,
+            "answer": user_message,
+        })
+
+        # Get next question
+        next_question = self.questionnaire.submit_answer(user_message)
+
+        if next_question:
+            # More questions to ask
+            q_num = self.questionnaire.get_question_number()
+            total = self.questionnaire.get_total_questions()
+            response = f"Question {q_num}/{total}: {next_question}"
+            yield response
+            self.conversation_history.append({"role": "assistant", "content": response})
+        else:
+            # All questions answered, move to evaluation
+            self.phase = WorkflowPhase.EVALUATION
+            self._persist_state()
+            yield from self._handle_evaluation()
+
+    def _handle_evaluation(self):
+        """Handle the evaluation phase - send to LLM and get utility weights."""
+        yield "Thank you! Analyzing your responses to understand your priorities...\n\n"
+
+        try:
+            # Evaluate the questionnaire
+            weights = self.questionnaire.evaluate()
+
+            # Store weights in state
+            self.state.utility_weights = {
+                "work": weights.work,
+                "health": weights.health,
+                "personal": weights.personal,
+            }
+            self._persist_state()
+
+            # Show the user their weights
+            yield f"Based on your answers, here's how I understand your priorities:\n\n"
+            yield f"  💼 Work:    {weights.work:.0f}/300\n"
+            yield f"  💪 Health:  {weights.health:.0f}/300\n"
+            yield f"  🎮 Personal: {weights.personal:.0f}/300\n\n"
+
+            if weights.reasoning:
+                yield f"_{weights.reasoning}_\n\n"
+
+            # Move to collect tasks phase
+            self.phase = WorkflowPhase.COLLECT_TASKS
+            self._persist_state()
+
+            yield TASKS_MESSAGE
+            self.conversation_history.append({"role": "assistant", "content": TASKS_MESSAGE})
+
+        except Exception as e:
+            yield f"I had trouble analyzing your responses. Using balanced weights.\n\n"
+            self.state.utility_weights = {"work": 100, "health": 100, "personal": 100}
+            self.phase = WorkflowPhase.COLLECT_TASKS
+            self._persist_state()
+            yield TASKS_MESSAGE
+
     def _handle_collect_tasks(self, user_message: str):
         """Handle the task collection phase."""
         raw_tasks = self._parse_tasks_from_message(user_message)
         self.state.raw_tasks = raw_tasks
 
-        # Categorize tasks (returns Task objects with name, category, utility)
-        self.state.tasks = self.categorize_service.categorize(raw_tasks)
+        # Categorize tasks with user's utility weights
+        self.state.tasks = self.categorize_service.categorize(
+            raw_tasks,
+            utility_weights=self.state.utility_weights,
+        )
 
         # Move to constraints phase
         self.phase = WorkflowPhase.CONSTRAINTS
@@ -170,7 +258,7 @@ class Orchestrator:
 
         # ALL_CATEGORIES overrides individual categories
         if has_all_categories:
-            mandatory_categories = {"work", "leisure", "health"}
+            mandatory_categories = {"work", "personal", "health"}
 
         # NONE clears all constraints (only applies if it's the only selection)
         if has_none and len(constraints) == 1:
@@ -231,7 +319,7 @@ class Orchestrator:
         ]
 
         for task in daily_plan.schedule:
-            category_emoji = {"health": "💪", "work": "💼", "leisure": "🎮"}.get(task.category, "📌")
+            category_emoji = {"health": "💪", "work": "💼", "personal": "🎮"}.get(task.category, "📌")
             lines.append(
                 f"{category_emoji} {task.start_time} - {task.end_time}: {task.task} ({task.duration_minutes} min)"
             )
