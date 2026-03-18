@@ -208,6 +208,9 @@ class Orchestrator:
                     start_time=task.time_slot,
                 ))
 
+        # Save constraints to state
+        self.state.constraint_set = self.constraint_set
+
         # Move to optimize phase
         self.phase = WorkflowPhase.OPTIMIZE
         self._persist_state()
@@ -230,6 +233,9 @@ class Orchestrator:
                     start_time=task.time_slot,
                 ))
 
+        # Save to state
+        self.state.constraint_set = self.constraint_set
+
     def apply_constraints_from_text(self, text: str) -> ConstraintSet:
         """Apply constraints from custom text.
 
@@ -249,6 +255,9 @@ class Orchestrator:
                     task_name=task.name,
                     start_time=task.time_slot,
                 ))
+
+        # Save to state
+        self.state.constraint_set = self.constraint_set
 
         return self.constraint_set
 

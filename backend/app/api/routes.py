@@ -2,6 +2,7 @@
 import uuid
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from app.state import ConstraintSet
 from app.api.schemas import (
     ChatMessage,
     ChatResponse,
@@ -165,21 +166,29 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
     Accepts either:
     - constraint_ids: List of task constraint IDs (button selections)
     - custom_constraint: Free-form text describing constraints
+
+    Returns constraint matching details so user can see what was understood.
     """
     orchestrator = get_orchestrator(request.session_id)
     if not orchestrator:
         raise HTTPException(status_code=404, detail="Session not found")
 
     output_chunks = []
+    matched_constraints = []
 
     if request.custom_constraint:
         # Handle custom text constraint via semantic matching
         constraint_set = orchestrator.apply_constraints_from_text(request.custom_constraint)
 
         if not constraint_set.is_empty():
-            output_chunks.append(f"Understood: {constraint_set.describe()}\n\n")
+            output_chunks.append(f"Understood from \"{request.custom_constraint}\":\n")
+            for c in constraint_set.constraints:
+                output_chunks.append(f"  - {c}\n")
+            output_chunks.append("\n")
+            matched_constraints = constraint_set.to_dict()
         else:
-            output_chunks.append("No specific constraints found. Optimizing for maximum utility...\n\n")
+            output_chunks.append(f"Could not parse constraints from: \"{request.custom_constraint}\"\n")
+            output_chunks.append("Optimizing for maximum utility...\n\n")
 
     elif request.constraint_ids:
         # Handle button-selected task constraints
@@ -187,10 +196,12 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
 
         if not orchestrator.constraint_set.is_empty():
             output_chunks.append(f"Applying: {orchestrator.constraint_set.describe()}\n\n")
+            matched_constraints = orchestrator.constraint_set.to_dict()
 
     else:
         # No constraints specified
-        orchestrator.constraint_set.constraints.clear()
+        orchestrator.constraint_set = ConstraintSet()
+        orchestrator.state.constraint_set = orchestrator.constraint_set
         output_chunks.append("No constraints. Optimizing for maximum utility...\n\n")
 
     # Run optimization
@@ -201,6 +212,7 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
         "success": True,
         "phase": orchestrator.phase.value,
         "message": "".join(output_chunks),
+        "matched_constraints": matched_constraints,
     }
 
 
@@ -242,7 +254,14 @@ def workflow_state(session_id: str):
             "start_time": state.time_window.start_time,
             "end_time": state.time_window.end_time,
         } if state.time_window else None,
-        "constraints": orchestrator.constraint_set.to_dict(),
+        "constraints": {
+            "raw": orchestrator.constraint_set.to_dict(),
+            "description": orchestrator.constraint_set.describe(),
+            "mandatory_tasks": list(orchestrator.constraint_set.mandatory_tasks),
+            "mandatory_categories": list(orchestrator.constraint_set.mandatory_categories),
+            "fixed_slots": orchestrator.constraint_set.fixed_slots,
+            "ordering": orchestrator.constraint_set.ordering_constraints,
+        },
         "optimizer_type": state.optimizer_type,
         "daily_plan": {
             "schedule": [

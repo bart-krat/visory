@@ -1,8 +1,9 @@
-"""Semantic matching for custom constraints.
+"""LLM-based semantic matching for custom constraints.
 
-Parses natural language constraint descriptions into typed
+Uses the LLM to parse natural language constraint descriptions into typed
 ConstraintSet objects that optimizers can understand.
 """
+import json
 import re
 
 from app.state import (
@@ -13,77 +14,90 @@ from app.state import (
     FixedTimeSlot,
     OrderedAfter,
 )
+from app.chat import get_chat_service
+
+
+CONSTRAINT_MATCHING_PROMPT = '''You are a constraint parser for a daily planning app.
+
+## Available Tasks
+{tasks_list}
+
+## Available Categories
+{categories_list}
+
+## Available Constraint Types
+
+1. **MustIncludeTask** - A specific task must be in the schedule
+   Format: {{"type": "must_include_task", "task_name": "<exact task name>"}}
+
+2. **MustIncludeCategory** - At least one task from a category must be included
+   Format: {{"type": "must_include_category", "category": "<health|work|personal>"}}
+
+3. **FixedTimeSlot** - A task must be scheduled at a specific time
+   Format: {{"type": "fixed_time_slot", "task_name": "<exact task name>", "start_time": <minutes from midnight>}}
+   (e.g., 9:00 AM = 540, 2:00 PM = 840, 5:30 PM = 1050)
+
+4. **OrderedAfter** - A task must come after another task
+   Format: {{"type": "ordered_after", "task_name": "<task that comes second>", "after_task": "<task that comes first>"}}
+
+## Examples
+
+User: "I need to go to the gym"
+Tasks available: ["Gym", "Meeting", "Lunch"]
+Output: [{{"type": "must_include_task", "task_name": "Gym"}}]
+
+User: "beach after run"
+Tasks available: ["Run", "Beach", "Work"]
+Output: [{{"type": "ordered_after", "task_name": "Beach", "after_task": "Run"}}, {{"type": "must_include_task", "task_name": "Beach"}}, {{"type": "must_include_task", "task_name": "Run"}}]
+
+User: "meeting at 2pm"
+Tasks available: ["Meeting", "Gym", "Lunch"]
+Output: [{{"type": "fixed_time_slot", "task_name": "Meeting", "start_time": 840}}]
+
+User: "I want to do something healthy"
+Tasks available: ["Work task", "Report"]
+Categories: health, work, personal
+Output: [{{"type": "must_include_category", "category": "health"}}]
+
+User: "first gym then lunch, and meeting at 3pm"
+Tasks available: ["Gym", "Lunch", "Meeting"]
+Output: [{{"type": "ordered_after", "task_name": "Lunch", "after_task": "Gym"}}, {{"type": "must_include_task", "task_name": "Gym"}}, {{"type": "must_include_task", "task_name": "Lunch"}}, {{"type": "fixed_time_slot", "task_name": "Meeting", "start_time": 900}}]
+
+User: "no constraints" or "none" or "just optimize"
+Output: []
+
+## Instructions
+
+Parse the user's constraint request and output a JSON array of constraints.
+- Use EXACT task names from the available tasks list
+- Only reference tasks that exist in the available tasks
+- If a task name doesn't match exactly, find the closest match
+- If the user mentions a generic category (health, work, personal) without specific tasks, use MustIncludeCategory
+- When using OrderedAfter, also include MustIncludeTask for both tasks to ensure they're selected
+- Output ONLY the JSON array, no explanation
+
+## User Request
+"{user_input}"
+
+## Output (JSON array only)
+'''
 
 
 class ConstraintMatcher:
-    """Matches natural language to typed constraints.
+    """LLM-based constraint matcher.
 
-    Recognizes patterns like:
-    - "must do gym" → MustIncludeTask("Gym")
-    - "need a workout" → MustIncludeCategory("health")
-    - "meeting at 2pm" → FixedTimeSlot("Meeting", 840)
-    - "beach after run" → OrderedAfter("Beach", "Run")
-
-    Usage:
-        matcher = ConstraintMatcher(tasks)
-        constraints = matcher.match("I need to do gym and beach after my run")
+    Uses the chat service to parse natural language into typed constraints.
     """
 
-    # Category keywords for semantic matching
-    CATEGORY_KEYWORDS = {
-        "health": [
-            "health", "healthy", "fitness", "exercise", "workout", "gym",
-            "run", "running", "walk", "walking", "yoga", "meditation",
-            "physical", "body", "wellness", "active", "sport",
-        ],
-        "work": [
-            "work", "working", "job", "meeting", "meetings", "office",
-            "project", "deadline", "email", "professional", "business",
-            "productivity", "task", "report", "presentation",
-        ],
-        "personal": [
-            "personal", "hobby", "fun", "relax", "relaxing", "leisure",
-            "entertainment", "social", "friends", "family", "creative",
-            "reading", "gaming", "music",
-        ],
-    }
-
-    # Patterns for constraint detection
-    MUST_PATTERNS = [
-        r"must\s+(?:do|include|have)\s+(.+)",
-        r"need\s+to\s+(?:do|include)\s+(.+)",
-        r"have\s+to\s+(?:do|include)\s+(.+)",
-        r"(?:definitely|absolutely)\s+(?:do|include)\s+(.+)",
-        r"make\s+sure\s+(?:to\s+)?(?:do|include)\s+(.+)",
-        r"don'?t\s+forget\s+(?:to\s+)?(.+)",
-    ]
-
-    ORDER_PATTERNS = [
-        r"(.+?)\s+after\s+(.+)",
-        r"(.+?)\s+following\s+(.+)",
-        r"(.+?)\s+then\s+(.+)",  # "run then beach" → beach after run
-        r"first\s+(.+?)\s+then\s+(.+)",  # "first run then beach"
-        r"(.+?)\s+before\s+(.+)",  # reversed: A before B → B after A
-    ]
-
-    TIME_PATTERNS = [
-        r"(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?",
-        r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(.+)",
-    ]
-
     def __init__(self, tasks: list[Task]):
-        """Initialize with available tasks.
-
-        Args:
-            tasks: List of tasks to match against.
-        """
+        """Initialize with available tasks."""
         self.tasks = tasks
         self.task_names = [t.name for t in tasks]
-        self.task_names_lower = {t.name.lower(): t.name for t in tasks}
         self.categories = list(set(t.category for t in tasks))
+        self.chat_service = get_chat_service()
 
     def match(self, text: str) -> ConstraintSet:
-        """Parse natural language into typed constraints.
+        """Parse natural language into typed constraints using LLM.
 
         Args:
             text: User's constraint description.
@@ -92,182 +106,116 @@ class ConstraintMatcher:
             ConstraintSet with extracted constraints.
         """
         cs = ConstraintSet()
+
+        # Handle empty or no-constraint inputs
         text_lower = text.lower().strip()
+        if not text_lower or text_lower in ["none", "no", "no constraints", "skip", ""]:
+            return cs
 
-        # Try to extract ordering constraints first (most specific)
-        ordering = self._extract_ordering(text_lower)
-        for constraint in ordering:
-            cs.add(constraint)
+        # Build the prompt with available tasks and categories
+        tasks_list = "\n".join(f"- {t.name} ({t.category})" for t in self.tasks)
+        categories_list = ", ".join(self.categories)
 
-        # Extract time-based constraints
-        time_constraints = self._extract_time_slots(text_lower)
-        for constraint in time_constraints:
-            cs.add(constraint)
+        prompt = CONSTRAINT_MATCHING_PROMPT.format(
+            tasks_list=tasks_list,
+            categories_list=categories_list,
+            user_input=text,
+        )
 
-        # Extract must-include task constraints
-        task_constraints = self._extract_must_include_tasks(text_lower)
-        for constraint in task_constraints:
-            # Avoid duplicates from ordering
-            existing_tasks = {c.task_name for c in cs.constraints if isinstance(c, MustIncludeTask)}
-            if constraint.task_name not in existing_tasks:
-                cs.add(constraint)
+        try:
+            # Call LLM
+            response = self.chat_service.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="You are a JSON constraint parser. Output only valid JSON arrays.",
+            )
 
-        # Extract category constraints
-        category_constraints = self._extract_categories(text_lower)
-        for constraint in category_constraints:
-            cs.add(constraint)
+            # Parse the response
+            constraints_data = self._parse_llm_response(response)
+
+            # Convert to typed constraints
+            for item in constraints_data:
+                constraint = self._dict_to_constraint(item)
+                if constraint:
+                    cs.add(constraint)
+
+        except Exception as e:
+            # If LLM fails, return empty constraint set
+            print(f"Constraint matching error: {e}")
 
         return cs
 
-    def _extract_ordering(self, text: str) -> list[OrderedAfter]:
-        """Extract ordering constraints from text."""
-        constraints = []
+    def _parse_llm_response(self, response: str) -> list[dict]:
+        """Parse LLM response to extract JSON array."""
+        response = response.strip()
 
-        for pattern in self.ORDER_PATTERNS:
-            matches = re.finditer(pattern, text, re.IGNORECASE)
-            for match in matches:
-                groups = match.groups()
+        # Try to find JSON array in response
+        # Sometimes LLM wraps it in markdown code blocks
+        if "```json" in response:
+            match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+            if match:
+                response = match.group(1)
+        elif "```" in response:
+            match = re.search(r'```\s*(.*?)\s*```', response, re.DOTALL)
+            if match:
+                response = match.group(1)
 
-                if "before" in pattern:
-                    # "A before B" means B comes after A
-                    first_text, second_text = groups[0], groups[1]
-                    first_task = self._find_task(first_text)
-                    second_task = self._find_task(second_text)
-                    if first_task and second_task:
-                        constraints.append(OrderedAfter(
-                            task_name=second_task,
-                            after_task=first_task,
-                        ))
-                elif "first" in pattern:
-                    # "first A then B" means B after A
-                    first_text, second_text = groups[0], groups[1]
-                    first_task = self._find_task(first_text)
-                    second_task = self._find_task(second_text)
-                    if first_task and second_task:
-                        constraints.append(OrderedAfter(
-                            task_name=second_task,
-                            after_task=first_task,
-                        ))
-                else:
-                    # "A after B" or "A then B" → A after B
-                    first_text, second_text = groups[0], groups[1]
-                    first_task = self._find_task(first_text)
-                    second_task = self._find_task(second_text)
-                    if first_task and second_task:
-                        if "then" in pattern:
-                            # "run then beach" → beach after run
-                            constraints.append(OrderedAfter(
-                                task_name=second_task,
-                                after_task=first_task,
-                            ))
-                        else:
-                            # "beach after run" → beach after run
-                            constraints.append(OrderedAfter(
-                                task_name=first_task,
-                                after_task=second_task,
-                            ))
+        # Find the JSON array
+        start = response.find('[')
+        end = response.rfind(']') + 1
 
-        return constraints
+        if start >= 0 and end > start:
+            json_str = response[start:end]
+            return json.loads(json_str)
 
-    def _extract_time_slots(self, text: str) -> list[FixedTimeSlot]:
-        """Extract fixed time slot constraints from text."""
-        constraints = []
+        return []
 
-        # Pattern: "meeting at 2pm" or "2pm meeting"
-        pattern = r"(.+?)\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?"
-        matches = re.finditer(pattern, text, re.IGNORECASE)
+    def _dict_to_constraint(self, data: dict):
+        """Convert a dict to a typed constraint."""
+        ctype = data.get("type")
 
-        for match in matches:
-            task_text = match.group(1)
-            hour = int(match.group(2))
-            minute = int(match.group(3)) if match.group(3) else 0
-            ampm = match.group(4)
+        if ctype == "must_include_task":
+            task_name = data.get("task_name")
+            # Validate task exists
+            if task_name in self.task_names:
+                return MustIncludeTask(task_name=task_name)
+            # Try case-insensitive match
+            for name in self.task_names:
+                if name.lower() == task_name.lower():
+                    return MustIncludeTask(task_name=name)
 
-            # Convert to 24-hour
-            if ampm:
-                if ampm.lower() == "pm" and hour != 12:
-                    hour += 12
-                elif ampm.lower() == "am" and hour == 12:
-                    hour = 0
+        elif ctype == "must_include_category":
+            category = data.get("category")
+            if category in self.categories:
+                return MustIncludeCategory(category=category)
 
-            task_name = self._find_task(task_text)
-            if task_name:
-                start_time = hour * 60 + minute
-                constraints.append(FixedTimeSlot(
-                    task_name=task_name,
-                    start_time=start_time,
-                ))
-
-        return constraints
-
-    def _extract_must_include_tasks(self, text: str) -> list[MustIncludeTask]:
-        """Extract must-include task constraints from text."""
-        constraints = []
-
-        # Try explicit patterns first
-        for pattern in self.MUST_PATTERNS:
-            matches = re.finditer(pattern, text, re.IGNORECASE)
-            for match in matches:
-                task_text = match.group(1)
-                task_name = self._find_task(task_text)
-                if task_name:
-                    constraints.append(MustIncludeTask(task_name=task_name))
-
-        # Also check for direct task name mentions
-        for task in self.tasks:
-            if task.name.lower() in text:
-                if not any(c.task_name == task.name for c in constraints):
-                    constraints.append(MustIncludeTask(task_name=task.name))
-
-        return constraints
-
-    def _extract_categories(self, text: str) -> list[MustIncludeCategory]:
-        """Extract category constraints from text."""
-        constraints = []
-
-        # Look for category keywords
-        for category, keywords in self.CATEGORY_KEYWORDS.items():
-            if category not in self.categories:
-                continue
-
-            for keyword in keywords:
-                # Check for patterns like "need a workout", "include something healthy"
-                if keyword in text:
-                    # Verify it's not just part of a task name we already matched
-                    if not any(keyword in t.name.lower() for t in self.tasks if t.name.lower() in text):
-                        constraints.append(MustIncludeCategory(category=category))
+        elif ctype == "fixed_time_slot":
+            task_name = data.get("task_name")
+            start_time = data.get("start_time")
+            # Validate task exists
+            matched_name = None
+            if task_name in self.task_names:
+                matched_name = task_name
+            else:
+                for name in self.task_names:
+                    if name.lower() == task_name.lower():
+                        matched_name = name
                         break
+            if matched_name and isinstance(start_time, int):
+                return FixedTimeSlot(task_name=matched_name, start_time=start_time)
 
-        return constraints
-
-    def _find_task(self, text: str) -> str | None:
-        """Find a task name in text.
-
-        Args:
-            text: Text that might contain a task name.
-
-        Returns:
-            Matched task name or None.
-        """
-        text = text.strip().lower()
-
-        # Exact match
-        if text in self.task_names_lower:
-            return self.task_names_lower[text]
-
-        # Partial match - task name contained in text
-        for task_lower, task_name in self.task_names_lower.items():
-            if task_lower in text or text in task_lower:
-                return task_name
-
-        # Fuzzy match - check if most words match
-        text_words = set(text.split())
-        for task_lower, task_name in self.task_names_lower.items():
-            task_words = set(task_lower.split())
-            if len(task_words) >= 2:
-                overlap = len(text_words & task_words)
-                if overlap >= len(task_words) * 0.5:
-                    return task_name
+        elif ctype == "ordered_after":
+            task_name = data.get("task_name")
+            after_task = data.get("after_task")
+            # Validate both tasks exist
+            matched_task = None
+            matched_after = None
+            for name in self.task_names:
+                if name.lower() == task_name.lower():
+                    matched_task = name
+                if name.lower() == after_task.lower():
+                    matched_after = name
+            if matched_task and matched_after:
+                return OrderedAfter(task_name=matched_task, after_task=matched_after)
 
         return None
 

@@ -197,6 +197,7 @@ class PlannerState:
     raw_tasks: list[str] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     time_window: TimeWindow | None = None
+    constraint_set: ConstraintSet = field(default_factory=ConstraintSet)
     daily_plan: DailyPlan | None = None
     optimizer_type: str | None = None
     updated_at: str = ""
@@ -212,6 +213,7 @@ class PlannerState:
             "raw_tasks": self.raw_tasks,
             "tasks": [asdict(t) for t in self.tasks],
             "time_window": asdict(self.time_window) if self.time_window else None,
+            "constraints": self.constraint_set.to_dict(),
             "optimizer_type": self.optimizer_type,
             "daily_plan": {
                 "schedule": [asdict(s) for s in self.daily_plan.schedule],
@@ -255,6 +257,9 @@ class PlannerState:
 
         if data.get("time_window"):
             state.time_window = TimeWindow(**data["time_window"])
+
+        if data.get("constraints"):
+            state.constraint_set = ConstraintSet.from_dict(data["constraints"])
 
         if data.get("daily_plan"):
             dp = data["daily_plan"]
