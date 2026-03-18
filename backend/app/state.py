@@ -18,13 +18,14 @@ class Task:
 
     Lifecycle:
     1. Categorizer: sets name, category, utility (duration=0)
-    2. Constraints: fills in duration
+    2. Constraints: fills in duration and optional time_slot
     3. Optimizer: uses complete task for scheduling
     """
     name: str
     category: str  # "work", "health", or "leisure"
     utility: float = 0.0
     duration: int = 0  # in minutes, filled by constraints phase
+    time_slot: int | None = None  # optional fixed start time (minutes from midnight)
 
 
 @dataclass

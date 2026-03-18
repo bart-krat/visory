@@ -15,14 +15,9 @@ class OptimizerService:
     - Tasks don't fit + no constraints → GreedyOptimizer
     """
 
-    def __init__(self, require_all_categories: bool = True):
-        """Initialize the optimizer service.
-
-        Args:
-            require_all_categories: Whether to require at least one task
-                                    from each category (health, work, leisure).
-        """
-        self.router = OptimizerRouter(require_all_categories=require_all_categories)
+    def __init__(self):
+        """Initialize the optimizer service."""
+        self.router = OptimizerRouter()
 
     def create_optimizer(self, require_all_categories: bool = True) -> None:
         """Configure the optimizer.

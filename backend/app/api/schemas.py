@@ -64,6 +64,24 @@ class Task(BaseModel):
     duration: int  # in minutes
     utility: float
     category: str  # "work", "health", or "leisure"
+    time_slot: int | None = None  # optional fixed start time (minutes from midnight)
+
+
+class TaskConstraintInput(BaseModel):
+    """Input for a single task's constraints."""
+
+    name: str
+    duration: int  # in minutes (required)
+    time_slot: str | None = None  # optional "HH:MM" format
+
+
+class ConstraintsSubmission(BaseModel):
+    """Request to submit task constraints."""
+
+    session_id: str
+    tasks: list[TaskConstraintInput]
+    time_window_start: str  # "HH:MM"
+    time_window_end: str    # "HH:MM"
 
 
 class ScheduledTask(BaseModel):

@@ -48,3 +48,6 @@ backend/plans/*.yaml
 .vercel
 .turbo
 Thumbs.db
+
+# State folder
+backend/state/

@@ -83,15 +83,11 @@ class Orchestrator:
         self.phase = WorkflowPhase.CONSTRAINTS
         self._persist_state()
 
-        # Stream the constraints question
-        full_response = ""
-        for chunk in self.constraints_service.generate_constraints_question(
-            self.state.tasks
-        ):
-            full_response += chunk
-            yield chunk
+        # Simple message - the frontend will show the constraints table
+        response = "Great! I've categorized your tasks. Please set the duration for each task and your available time window."
+        yield response
 
-        self.conversation_history.append({"role": "assistant", "content": full_response})
+        self.conversation_history.append({"role": "assistant", "content": response})
 
     def _handle_constraints(self, user_message: str):
         """Handle the constraints gathering phase."""
@@ -149,8 +145,17 @@ class Orchestrator:
         """Handle the optimization phase."""
         yield "Creating your optimized schedule...\n\n"
 
-        # Get the optimizer type that will be selected
         router = self.optimizer_service.router
+
+        # Set fixed_slots from tasks that have time_slot specified
+        fixed_slots = {
+            task.name: task.time_slot
+            for task in self.state.tasks
+            if task.time_slot is not None
+        }
+        router.fixed_slots = fixed_slots if fixed_slots else None
+
+        # Get the optimizer type that will be selected
         selected_type = router._select_optimizer(self.state.tasks, self.state.time_window)
         self.state.optimizer_type = selected_type.value
 

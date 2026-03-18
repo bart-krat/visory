@@ -10,7 +10,7 @@ from app.optimize.knapsack_optimizer import KnapsackOptimizer
 class OptimizerType(str, Enum):
     SIMPLE = "simple"      # Orders by category: Health -> Work -> Leisure
     GREEDY = "greedy"      # Maximizes utility/time ratio
-    KNAPSACK = "knapsack"  # DP with category coverage constraint
+    KNAPSACK = "knapsack"  # DP with flexible constraints
 
 
 class OptimizerRouter:
@@ -27,20 +27,39 @@ class OptimizerRouter:
        (Need optimal selection respecting constraints)
     """
 
-    def __init__(self, require_all_categories: bool = True):
-        """Initialize router.
-
-        Args:
-            require_all_categories: Whether to enforce that the plan
-                                    includes at least one task from each
-                                    category (health, work, leisure).
-        """
+    def __init__(self):
+        """Initialize router with default constraints."""
         self._optimizers: dict[OptimizerType, BaseOptimizer] = {
             OptimizerType.SIMPLE: SimpleOptimizer(),
             OptimizerType.GREEDY: GreedyOptimizer(),
             OptimizerType.KNAPSACK: KnapsackOptimizer(),
         }
-        self.require_all_categories = require_all_categories
+
+        # Constraint settings for knapsack optimizer
+        self.mandatory_categories: set[str] | None = {"work", "leisure", "health"}
+        self.mandatory_tasks: set[str] | None = None
+        self.fixed_slots: dict[str, int] | None = None  # {task_name: minute_of_day}
+
+    @property
+    def require_all_categories(self) -> bool:
+        """Backward compatible property."""
+        return self.mandatory_categories == {"work", "leisure", "health"}
+
+    @require_all_categories.setter
+    def require_all_categories(self, value: bool):
+        """Backward compatible setter."""
+        if value:
+            self.mandatory_categories = {"work", "leisure", "health"}
+        else:
+            self.mandatory_categories = None
+
+    def has_constraints(self) -> bool:
+        """Check if any constraints are set."""
+        return bool(
+            self.mandatory_categories or
+            self.mandatory_tasks or
+            self.fixed_slots
+        )
 
     def optimize(
         self,
@@ -62,6 +81,17 @@ class OptimizerRouter:
             optimizer_type = self._select_optimizer(tasks, time_window)
 
         optimizer = self._optimizers[optimizer_type]
+
+        # KnapsackOptimizer accepts additional constraint parameters
+        if optimizer_type == OptimizerType.KNAPSACK:
+            return optimizer.optimize(
+                tasks,
+                time_window,
+                mandatory_tasks=self.mandatory_tasks,
+                mandatory_categories=self.mandatory_categories,
+                fixed_slots=self.fixed_slots,
+            )
+
         return optimizer.optimize(tasks, time_window)
 
     def _select_optimizer(
@@ -72,10 +102,15 @@ class OptimizerRouter:
         """Auto-select the appropriate optimizer.
 
         Logic:
-        1. tasks fit in window → SIMPLE
-        2. tasks don't fit, no constraints → GREEDY
-        3. tasks don't fit, has constraints → KNAPSACK
+        1. Has fixed_slots → KNAPSACK (must respect time constraints)
+        2. Tasks fit in window → SIMPLE
+        3. Tasks don't fit + has constraints → KNAPSACK
+        4. Tasks don't fit + no constraints → GREEDY
         """
+        # Fixed slots require knapsack for time-aware scheduling
+        if self.fixed_slots:
+            return OptimizerType.KNAPSACK
+
         total_duration = sum(t.duration for t in tasks)
         buffer_time = (len(tasks) - 1) * 5 if len(tasks) > 1 else 0
         total_with_buffer = total_duration + buffer_time
@@ -87,7 +122,7 @@ class OptimizerRouter:
             return OptimizerType.SIMPLE
 
         # Tasks don't fit, need selection
-        if self.require_all_categories:
+        if self.has_constraints():
             return OptimizerType.KNAPSACK
         else:
             return OptimizerType.GREEDY

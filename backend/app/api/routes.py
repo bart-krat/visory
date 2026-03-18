@@ -9,6 +9,7 @@ from app.api.schemas import (
     CategorizedTask,
     WorkflowStartResponse,
     WorkflowMessageRequest,
+    ConstraintsSubmission,
 )
 from app.chat import get_chat_service
 from app.categorize import get_categorize_service
@@ -93,6 +94,44 @@ def workflow_message(request: WorkflowMessageRequest):
     )
 
 
+@router.post("/workflow/constraints")
+def submit_constraints(request: ConstraintsSubmission):
+    """Submit task constraints (duration, time slots, time window)."""
+    from app.state import TimeWindow
+
+    orchestrator = get_orchestrator(request.session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Update tasks with duration and time_slot
+    for task_input in request.tasks:
+        for task in orchestrator.state.tasks:
+            if task.name == task_input.name:
+                task.duration = task_input.duration
+                if task_input.time_slot:
+                    # Convert "HH:MM" to minutes from midnight
+                    h, m = map(int, task_input.time_slot.split(":"))
+                    task.time_slot = h * 60 + m
+                break
+
+    # Set time window
+    orchestrator.state.time_window = TimeWindow(
+        start_time=request.time_window_start,
+        end_time=request.time_window_end,
+    )
+
+    # Advance to constraint clarification phase
+    from app.orchestrator import WorkflowPhase
+    orchestrator.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
+    orchestrator._persist_state()
+
+    return {
+        "success": True,
+        "phase": orchestrator.phase.value,
+        "message": "Constraints saved. Please select an optimization preference.",
+    }
+
+
 @router.get("/constraints/options")
 def get_constraint_options():
     """Get available constraint options for UI."""
@@ -118,6 +157,7 @@ def workflow_state(session_id: str):
                 "category": t.category,
                 "utility": t.utility,
                 "duration": t.duration,
+                "time_slot": t.time_slot,
             }
             for t in state.tasks
         ],
