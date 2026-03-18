@@ -84,6 +84,13 @@ class ConstraintsSubmission(BaseModel):
     time_window_end: str    # "HH:MM"
 
 
+class ConstraintSelectionRequest(BaseModel):
+    """Request to submit selected constraints and run optimization."""
+
+    session_id: str
+    constraint_ids: list[str]  # List of constraint IDs (e.g., ["CATEGORY_WORK", "TASK_Go to gym"])
+
+
 class ScheduledTask(BaseModel):
     """A task scheduled at a specific time."""
 

@@ -10,6 +10,7 @@ from app.api.schemas import (
     WorkflowStartResponse,
     WorkflowMessageRequest,
     ConstraintsSubmission,
+    ConstraintSelectionRequest,
 )
 from app.chat import get_chat_service
 from app.categorize import get_categorize_service
@@ -120,6 +121,10 @@ def submit_constraints(request: ConstraintsSubmission):
         end_time=request.time_window_end,
     )
 
+    # Build constraint clarification with current tasks for dynamic options
+    from app.constraints import ConstraintClarification
+    orchestrator.constraint_clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
+
     # Advance to constraint clarification phase
     from app.orchestrator import WorkflowPhase
     orchestrator.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
@@ -132,12 +137,57 @@ def submit_constraints(request: ConstraintsSubmission):
     }
 
 
-@router.get("/constraints/options")
-def get_constraint_options():
-    """Get available constraint options for UI."""
+@router.get("/constraints/options/{session_id}")
+def get_constraint_options(session_id: str):
+    """Get available constraint options for UI based on session tasks."""
     from app.constraints import ConstraintClarification
-    clarification = ConstraintClarification()
+
+    orchestrator = get_orchestrator(session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Build clarification with current tasks for dynamic options
+    clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
     return {"options": clarification.get_options_for_ui()}
+
+
+@router.post("/constraints/submit")
+def submit_constraint_selection(request: ConstraintSelectionRequest):
+    """Submit selected constraints and run optimization."""
+    from app.constraints import ConstraintClarification
+    from app.state import CONSTRAINTS
+
+    orchestrator = get_orchestrator(request.session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Build clarification to parse constraint IDs
+    clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
+
+    # Parse all selected constraint IDs into Constraint objects
+    constraints = []
+    for constraint_id in request.constraint_ids:
+        constraint = clarification.parse_response(constraint_id)
+        if constraint:
+            constraints.append(constraint)
+
+    # Default to NONE if no valid constraints
+    if not constraints:
+        constraints = [CONSTRAINTS["NONE"]]
+
+    # Apply constraints and run optimization via orchestrator
+    orchestrator.apply_constraints(constraints)
+
+    # Collect optimization output
+    output_chunks = []
+    for chunk in orchestrator.run_optimization():
+        output_chunks.append(chunk)
+
+    return {
+        "success": True,
+        "phase": orchestrator.phase.value,
+        "message": "".join(output_chunks),
+    }
 
 
 @router.get("/workflow/{session_id}/state")
@@ -165,11 +215,14 @@ def workflow_state(session_id: str):
             "start_time": state.time_window.start_time,
             "end_time": state.time_window.end_time,
         } if state.time_window else None,
-        "constraint": {
-            "id": state.constraint.id,
-            "name": state.constraint.name,
-            "description": state.constraint.description,
-        } if state.constraint else None,
+        "constraints": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "description": c.description,
+            }
+            for c in state.constraints
+        ],
         "optimizer_type": state.optimizer_type,
         "daily_plan": {
             "schedule": [

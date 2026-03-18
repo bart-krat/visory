@@ -26,7 +26,7 @@ class Orchestrator:
         self.conversation_history: list[dict] = []
         self.categorize_service = get_categorize_service()
         self.constraints_service = get_constraints_service()
-        self.constraint_clarification = ConstraintClarification()
+        self.constraint_clarification: ConstraintClarification | None = None  # Built dynamically with tasks
         self.optimizer_service = get_optimizer_service()
 
     def _persist_state(self):
@@ -106,6 +106,9 @@ class Orchestrator:
             self.state.tasks = tasks  # Tasks now have duration filled
             self.state.time_window = time_window
 
+            # Build constraint clarification with current tasks for dynamic options
+            self.constraint_clarification = ConstraintClarification(tasks=self.state.tasks)
+
             # Move to constraint clarification phase
             self.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
             self._persist_state()
@@ -119,7 +122,7 @@ class Orchestrator:
             self.conversation_history.append({"role": "assistant", "content": full_response})
 
     def _handle_constraint_clarification(self, user_message: str):
-        """Handle the constraint clarification phase."""
+        """Handle the constraint clarification phase (single constraint via chat)."""
         constraint = self.constraint_clarification.parse_response(user_message)
 
         if constraint is None:
@@ -127,18 +130,63 @@ class Orchestrator:
             constraint = CONSTRAINTS["ALL_CATEGORIES"]
             yield f"I'll use the default: **{constraint.button_label}**\n\n"
 
-        self.state.constraint = constraint
-
-        # Configure optimizer based on constraint
-        if constraint.id == "ALL_CATEGORIES":
-            self.optimizer_service.router.require_all_categories = True
-        else:
-            self.optimizer_service.router.require_all_categories = False
+        # Apply single constraint as a list
+        self.apply_constraints([constraint])
 
         # Move to optimize phase
         self.phase = WorkflowPhase.OPTIMIZE
         self._persist_state()
 
+        yield from self._handle_optimize()
+
+    def apply_constraints(self, constraints: list):
+        """Apply multiple constraints to the optimizer.
+
+        Args:
+            constraints: List of Constraint objects to apply.
+        """
+        from app.state import Constraint
+
+        self.state.constraints = constraints
+        router = self.optimizer_service.router
+
+        # Combine all constraints into mandatory_categories and mandatory_tasks
+        mandatory_categories: set[str] = set()
+        mandatory_tasks: set[str] = set()
+        has_none = False
+        has_all_categories = False
+
+        for constraint in constraints:
+            if constraint.id == "ALL_CATEGORIES":
+                has_all_categories = True
+            elif constraint.id == "NONE":
+                has_none = True
+            elif constraint.id.startswith("CATEGORY_"):
+                category = constraint.id.replace("CATEGORY_", "").lower()
+                mandatory_categories.add(category)
+            elif constraint.id.startswith("TASK_"):
+                task_name = constraint.id.replace("TASK_", "")
+                mandatory_tasks.add(task_name)
+
+        # ALL_CATEGORIES overrides individual categories
+        if has_all_categories:
+            mandatory_categories = {"work", "leisure", "health"}
+
+        # NONE clears all constraints (only applies if it's the only selection)
+        if has_none and len(constraints) == 1:
+            mandatory_categories = set()
+            mandatory_tasks = set()
+
+        # Set router constraints (None means no constraint, empty set also means no constraint)
+        router.mandatory_categories = mandatory_categories if mandatory_categories else None
+        router.mandatory_tasks = mandatory_tasks if mandatory_tasks else None
+
+    def run_optimization(self):
+        """Run optimization and yield progress/results.
+
+        Public method for API to call directly.
+        """
+        self.phase = WorkflowPhase.OPTIMIZE
         yield from self._handle_optimize()
 
     def _handle_optimize(self):
@@ -188,7 +236,13 @@ class Orchestrator:
                 f"{category_emoji} {task.start_time} - {task.end_time}: {task.task} ({task.duration_minutes} min)"
             )
 
-        lines.append(f"\nConstraint: {self.state.constraint.button_label}")
+        # Show constraints
+        if self.state.constraints:
+            constraint_labels = [c.button_label for c in self.state.constraints]
+            lines.append(f"\nConstraints: {', '.join(constraint_labels)}")
+        else:
+            lines.append("\nConstraints: None")
+
         lines.append(f"Optimizer: {self.state.optimizer_type}")
         lines.append("\nYour day is planned!")
 

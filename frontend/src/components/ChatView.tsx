@@ -16,6 +16,7 @@ export default function ChatView() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [phase, setPhase] = useState<string>('')
   const [constraintOptions, setConstraintOptions] = useState<ConstraintOption[]>([])
+  const [selectedConstraints, setSelectedConstraints] = useState<Set<string>>(new Set())
 
   // Constraints table state
   const [tasksForConstraints, setTasksForConstraints] = useState<TaskForConstraints[]>([])
@@ -63,12 +64,13 @@ export default function ChatView() {
 
   // Fetch constraint options when entering constraint_clarification phase
   useEffect(() => {
-    if (phase === 'constraint_clarification') {
+    if (phase === 'constraint_clarification' && sessionId) {
       const fetchOptions = async () => {
         try {
-          const res = await fetch('/api/constraints/options')
+          const res = await fetch(`/api/constraints/options/${sessionId}`)
           const data = await res.json()
           setConstraintOptions(data.options)
+          setSelectedConstraints(new Set()) // Clear previous selections
         } catch {
           console.error('Failed to fetch constraint options')
         }
@@ -76,8 +78,9 @@ export default function ChatView() {
       fetchOptions()
     } else {
       setConstraintOptions([])
+      setSelectedConstraints(new Set())
     }
-  }, [phase])
+  }, [phase, sessionId])
 
   // Fetch current phase from server
   const fetchCurrentPhase = async () => {
@@ -137,8 +140,68 @@ export default function ChatView() {
     setLoading(false)
   }
 
-  const handleConstraintSelect = (option: ConstraintOption) => {
-    send(option.id)
+  const toggleConstraint = (optionId: string) => {
+    setSelectedConstraints(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(optionId)) {
+        newSet.delete(optionId)
+      } else {
+        // Special handling: NONE clears other selections, other selections clear NONE
+        if (optionId === 'NONE') {
+          newSet.clear()
+          newSet.add('NONE')
+        } else {
+          newSet.delete('NONE')
+          newSet.add(optionId)
+        }
+      }
+      return newSet
+    })
+  }
+
+  const submitConstraints2 = async () => {
+    if (!sessionId) return
+
+    const constraintIds = Array.from(selectedConstraints)
+    if (constraintIds.length === 0) {
+      constraintIds.push('NONE')
+    }
+
+    setLoading(true)
+
+    try {
+      const res = await fetch('/api/constraints/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          constraint_ids: constraintIds,
+        })
+      })
+
+      const data = await res.json()
+
+      // Show selected constraints and result
+      const constraintLabels = constraintOptions
+        .filter(opt => selectedConstraints.has(opt.id))
+        .map(opt => opt.label)
+        .join(', ') || 'No constraints'
+
+      setMessages(prev => [
+        ...prev,
+        { role: 'user', content: `Constraints: ${constraintLabels}` },
+        { role: 'assistant', content: data.message }
+      ])
+
+      setPhase(data.phase)
+      setSelectedConstraints(new Set())
+      setConstraintOptions([])
+
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error running optimization' }])
+    }
+
+    setLoading(false)
   }
 
   const updateTaskDuration = (index: number, duration: string) => {
@@ -329,38 +392,132 @@ export default function ChatView() {
       {/* Constraint selection buttons */}
       {phase === 'constraint_clarification' && constraintOptions.length > 0 && !loading && (
         <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 8, fontSize: 14, color: '#333' }}>
-            Select an optimization preference:
+          <div style={{ marginBottom: 12, fontSize: 14, color: '#333' }}>
+            Select optimization constraints (multiple allowed):
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {constraintOptions.map(option => (
-              <button
-                key={option.id}
-                onClick={() => handleConstraintSelect(option)}
-                style={{
-                  padding: '12px 20px',
-                  borderRadius: 8,
-                  background: '#fff',
-                  border: '2px solid #007bff',
-                  color: '#007bff',
-                  cursor: 'pointer',
-                  fontSize: 14,
-                  fontWeight: 500,
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = '#007bff'
-                  e.currentTarget.style.color = '#fff'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = '#fff'
-                  e.currentTarget.style.color = '#007bff'
-                }}
-                title={option.description}
-              >
-                {option.label}
-              </button>
-            ))}
+
+          {/* General options (ALL_CATEGORIES, NONE) */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>General</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {constraintOptions
+                .filter(opt => opt.id === 'ALL_CATEGORIES' || opt.id === 'NONE')
+                .map(option => {
+                  const isSelected = selectedConstraints.has(option.id)
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => toggleConstraint(option.id)}
+                      style={{
+                        padding: '10px 16px',
+                        borderRadius: 8,
+                        background: isSelected ? '#007bff' : '#fff',
+                        border: '2px solid #007bff',
+                        color: isSelected ? '#fff' : '#007bff',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        transition: 'all 0.2s',
+                      }}
+                      title={option.description}
+                    >
+                      {isSelected && '✓ '}{option.label}
+                    </button>
+                  )
+                })}
+            </div>
+          </div>
+
+          {/* Category options */}
+          {constraintOptions.some(opt => opt.id.startsWith('CATEGORY_')) && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>By Category</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {constraintOptions
+                  .filter(opt => opt.id.startsWith('CATEGORY_'))
+                  .map(option => {
+                    const isSelected = selectedConstraints.has(option.id)
+                    return (
+                      <button
+                        key={option.id}
+                        onClick={() => toggleConstraint(option.id)}
+                        style={{
+                          padding: '8px 14px',
+                          borderRadius: 8,
+                          background: isSelected ? '#28a745' : '#fff',
+                          border: '2px solid #28a745',
+                          color: isSelected ? '#fff' : '#28a745',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          transition: 'all 0.2s',
+                        }}
+                        title={option.description}
+                      >
+                        {isSelected && '✓ '}{option.label}
+                      </button>
+                    )
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* Task options */}
+          {constraintOptions.some(opt => opt.id.startsWith('TASK_')) && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>By Task</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {constraintOptions
+                  .filter(opt => opt.id.startsWith('TASK_'))
+                  .map(option => {
+                    const isSelected = selectedConstraints.has(option.id)
+                    return (
+                      <button
+                        key={option.id}
+                        onClick={() => toggleConstraint(option.id)}
+                        style={{
+                          padding: '8px 14px',
+                          borderRadius: 8,
+                          background: isSelected ? '#6c757d' : '#fff',
+                          border: '2px solid #6c757d',
+                          color: isSelected ? '#fff' : '#6c757d',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          transition: 'all 0.2s',
+                        }}
+                        title={option.description}
+                      >
+                        {isSelected && '✓ '}{option.label}
+                      </button>
+                    )
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* Run Optimization button */}
+          <div style={{ marginTop: 16 }}>
+            <button
+              onClick={submitConstraints2}
+              style={{
+                padding: '12px 28px',
+                borderRadius: 8,
+                background: '#007bff',
+                color: '#fff',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              Run Optimization
+            </button>
+            {selectedConstraints.size > 0 && (
+              <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>
+                {selectedConstraints.size} constraint{selectedConstraints.size > 1 ? 's' : ''} selected
+              </span>
+            )}
           </div>
         </div>
       )}

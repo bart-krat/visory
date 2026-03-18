@@ -86,7 +86,7 @@ class PlannerState:
     raw_tasks: list[str] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     time_window: TimeWindow | None = None
-    constraint: Constraint | None = None
+    constraints: list[Constraint] = field(default_factory=list)  # Multiple constraints
     daily_plan: DailyPlan | None = None
     optimizer_type: str | None = None  # Which optimizer was selected
     updated_at: str = ""
@@ -100,7 +100,7 @@ class PlannerState:
             "raw_tasks": self.raw_tasks,
             "tasks": [asdict(t) for t in self.tasks],
             "time_window": asdict(self.time_window) if self.time_window else None,
-            "constraint": asdict(self.constraint) if self.constraint else None,
+            "constraints": [asdict(c) for c in self.constraints],
             "optimizer_type": self.optimizer_type,
             "daily_plan": {
                 "schedule": [asdict(s) for s in self.daily_plan.schedule],
@@ -152,9 +152,9 @@ class PlannerState:
         if data.get("time_window"):
             state.time_window = TimeWindow(**data["time_window"])
 
-        # Reconstruct constraint
-        if data.get("constraint"):
-            state.constraint = Constraint(**data["constraint"])
+        # Reconstruct constraints
+        for c in data.get("constraints", []):
+            state.constraints.append(Constraint(**c))
 
         # Reconstruct daily_plan
         if data.get("daily_plan"):

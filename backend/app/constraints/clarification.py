@@ -2,34 +2,64 @@
 
 Handles user selection of optimization constraints.
 """
-from app.state import Constraint, CONSTRAINTS
+from app.state import Constraint, CONSTRAINTS, Task
 
 
 class ConstraintClarification:
     """Handles constraint selection in the workflow.
 
-    Usage:
-        clarification = ConstraintClarification()
+    Generates dynamic options based on tasks:
+    - Static: ALL_CATEGORIES, NONE
+    - Dynamic per category: CATEGORY_<category>
+    - Dynamic per task: TASK_<task_name>
 
-        # Stream the question to user
-        for chunk in clarification.generate_question():
-            yield chunk
+    Usage:
+        clarification = ConstraintClarification(tasks=state.tasks)
+
+        # Get options for UI
+        options = clarification.get_options_for_ui()
 
         # Parse user response
         constraint = clarification.parse_response(user_input)
     """
 
-    def __init__(self, constraint_ids: list[str] | None = None):
-        """Initialize with specific constraints to offer.
+    def __init__(self, tasks: list[Task] | None = None):
+        """Initialize with tasks to generate dynamic options.
 
         Args:
-            constraint_ids: List of constraint IDs to offer.
-                           Defaults to all available constraints.
+            tasks: List of tasks to generate category/task-specific options.
         """
-        if constraint_ids:
-            self.options = [CONSTRAINTS[cid] for cid in constraint_ids if cid in CONSTRAINTS]
-        else:
-            self.options = list(CONSTRAINTS.values())
+        self.tasks = tasks or []
+        self.options = self._build_options()
+
+    def _build_options(self) -> list[Constraint]:
+        """Build the full list of constraint options."""
+        options = []
+
+        # Static options first
+        options.append(CONSTRAINTS["ALL_CATEGORIES"])
+        options.append(CONSTRAINTS["NONE"])
+
+        # Dynamic category options (only for categories present in tasks)
+        categories = sorted(set(t.category for t in self.tasks))
+        for category in categories:
+            options.append(Constraint(
+                id=f"CATEGORY_{category.upper()}",
+                name=f"Include {category.title()}",
+                description=f"Must include at least one {category} task",
+                button_label=f"Must include {category}",
+            ))
+
+        # Dynamic task options
+        for task in self.tasks:
+            options.append(Constraint(
+                id=f"TASK_{task.name}",
+                name=f"Include {task.name}",
+                description=f"Must include the task: {task.name}",
+                button_label=f"Must do: {task.name}",
+            ))
+
+        return options
 
     def generate_question(self):
         """Generate the constraint selection question.
@@ -58,7 +88,7 @@ class ConstraintClarification:
         """Parse user's constraint selection.
 
         Accepts:
-        - Option ID (e.g., "ALL_CATEGORIES")
+        - Option ID (e.g., "ALL_CATEGORIES", "CATEGORY_WORK", "TASK_Go to gym")
         - Option number (e.g., "1")
         - Partial match on button label
 
@@ -70,9 +100,9 @@ class ConstraintClarification:
         """
         user_input = user_input.strip()
 
-        # Try exact ID match
+        # Try exact ID match (case-insensitive for static, case-sensitive for dynamic)
         for opt in self.options:
-            if user_input.upper() == opt.id:
+            if user_input == opt.id or user_input.upper() == opt.id:
                 return opt
 
         # Try number selection
