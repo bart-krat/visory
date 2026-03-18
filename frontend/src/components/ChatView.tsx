@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 type ConstraintOption = { id: string; label: string; description: string }
+type ConstraintOptionsResponse = { options: ConstraintOption[]; supports_custom_text: boolean }
 type TaskForConstraints = {
   name: string
   category: string
@@ -17,6 +18,8 @@ export default function ChatView() {
   const [phase, setPhase] = useState<string>('')
   const [constraintOptions, setConstraintOptions] = useState<ConstraintOption[]>([])
   const [selectedConstraints, setSelectedConstraints] = useState<Set<string>>(new Set())
+  const [supportsCustomText, setSupportsCustomText] = useState(false)
+  const [customConstraintText, setCustomConstraintText] = useState('')
 
   // Questionnaire progress
   const [questionnaireProgress, setQuestionnaireProgress] = useState<{current: number, total: number} | null>(null)
@@ -71,9 +74,11 @@ export default function ChatView() {
       const fetchOptions = async () => {
         try {
           const res = await fetch(`/api/constraints/options/${sessionId}`)
-          const data = await res.json()
-          setConstraintOptions(data.options)
-          setSelectedConstraints(new Set()) // Clear previous selections
+          const data: ConstraintOptionsResponse = await res.json()
+          setConstraintOptions(data.options || [])
+          setSupportsCustomText(data.supports_custom_text || false)
+          setSelectedConstraints(new Set())
+          setCustomConstraintText('')
         } catch {
           console.error('Failed to fetch constraint options')
         }
@@ -81,7 +86,9 @@ export default function ChatView() {
       fetchOptions()
     } else {
       setConstraintOptions([])
+      setSupportsCustomText(false)
       setSelectedConstraints(new Set())
+      setCustomConstraintText('')
     }
   }, [phase, sessionId])
 
@@ -147,19 +154,16 @@ export default function ChatView() {
   }
 
   const toggleConstraint = (optionId: string) => {
+    // Clear custom text when selecting buttons
+    if (customConstraintText.trim()) {
+      setCustomConstraintText('')
+    }
     setSelectedConstraints(prev => {
       const newSet = new Set(prev)
       if (newSet.has(optionId)) {
         newSet.delete(optionId)
       } else {
-        // Special handling: NONE clears other selections, other selections clear NONE
-        if (optionId === 'NONE') {
-          newSet.clear()
-          newSet.add('NONE')
-        } else {
-          newSet.delete('NONE')
-          newSet.add(optionId)
-        }
+        newSet.add(optionId)
       }
       return newSet
     })
@@ -169,8 +173,12 @@ export default function ChatView() {
     if (!sessionId) return
 
     const constraintIds = Array.from(selectedConstraints)
-    if (constraintIds.length === 0) {
-      constraintIds.push('NONE')
+    const hasCustomText = customConstraintText.trim().length > 0
+    const hasButtonSelection = constraintIds.length > 0
+
+    // Need at least one constraint type
+    if (!hasCustomText && !hasButtonSelection) {
+      // No constraints - will optimize for max utility
     }
 
     setLoading(true)
@@ -182,26 +190,36 @@ export default function ChatView() {
         body: JSON.stringify({
           session_id: sessionId,
           constraint_ids: constraintIds,
+          custom_constraint: hasCustomText ? customConstraintText.trim() : null,
         })
       })
 
       const data = await res.json()
 
-      // Show selected constraints and result
-      const constraintLabels = constraintOptions
-        .filter(opt => selectedConstraints.has(opt.id))
-        .map(opt => opt.label)
-        .join(', ') || 'No constraints'
+      // Show what the user selected
+      let userMessage = ''
+      if (hasCustomText) {
+        userMessage = `Constraint: "${customConstraintText.trim()}"`
+      } else if (hasButtonSelection) {
+        const constraintLabels = constraintOptions
+          .filter(opt => selectedConstraints.has(opt.id))
+          .map(opt => opt.label)
+          .join(', ')
+        userMessage = `Constraints: ${constraintLabels}`
+      } else {
+        userMessage = 'No constraints (maximize utility)'
+      }
 
       setMessages(prev => [
         ...prev,
-        { role: 'user', content: `Constraints: ${constraintLabels}` },
+        { role: 'user', content: userMessage },
         { role: 'assistant', content: data.message }
       ])
 
       setPhase(data.phase)
       setSelectedConstraints(new Set())
       setConstraintOptions([])
+      setCustomConstraintText('')
 
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error running optimization' }])
@@ -431,31 +449,62 @@ export default function ChatView() {
         )}
       </div>
 
-      {/* Constraint selection buttons */}
-      {phase === 'constraint_clarification' && constraintOptions.length > 0 && !loading && (
+      {/* Constraint selection UI */}
+      {phase === 'constraint_clarification' && !loading && (
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 12, fontSize: 14, color: '#333' }}>
-            Select optimization constraints (multiple allowed):
+            How would you like to optimize your schedule?
           </div>
 
-          {/* General options (ALL_CATEGORIES, NONE) */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>General</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {constraintOptions
-                .filter(opt => opt.id === 'ALL_CATEGORIES' || opt.id === 'NONE')
-                .map(option => {
+          {/* Custom text input */}
+          {supportsCustomText && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                Describe your requirements in your own words:
+              </div>
+              <textarea
+                value={customConstraintText}
+                onChange={e => {
+                  setCustomConstraintText(e.target.value)
+                  // Clear button selections when typing custom text
+                  if (e.target.value.trim() && selectedConstraints.size > 0) {
+                    setSelectedConstraints(new Set())
+                  }
+                }}
+                placeholder='e.g., "I need to do at least one workout" or "Make sure I attend the meeting"'
+                style={{
+                  width: '100%',
+                  padding: 12,
+                  borderRadius: 8,
+                  border: '1px solid #ccc',
+                  fontSize: 14,
+                  minHeight: 60,
+                  resize: 'vertical',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          )}
+
+          {/* Task buttons */}
+          {constraintOptions.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                Or select specific tasks that must be included:
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {constraintOptions.map(option => {
                   const isSelected = selectedConstraints.has(option.id)
                   return (
                     <button
                       key={option.id}
                       onClick={() => toggleConstraint(option.id)}
                       style={{
-                        padding: '10px 16px',
+                        padding: '8px 14px',
                         borderRadius: 8,
-                        background: isSelected ? '#007bff' : '#fff',
-                        border: '2px solid #007bff',
-                        color: isSelected ? '#fff' : '#007bff',
+                        background: isSelected ? '#6c757d' : '#fff',
+                        border: '2px solid #6c757d',
+                        color: isSelected ? '#fff' : '#6c757d',
                         cursor: 'pointer',
                         fontSize: 13,
                         fontWeight: 500,
@@ -467,73 +516,6 @@ export default function ChatView() {
                     </button>
                   )
                 })}
-            </div>
-          </div>
-
-          {/* Category options */}
-          {constraintOptions.some(opt => opt.id.startsWith('CATEGORY_')) && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>By Category</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {constraintOptions
-                  .filter(opt => opt.id.startsWith('CATEGORY_'))
-                  .map(option => {
-                    const isSelected = selectedConstraints.has(option.id)
-                    return (
-                      <button
-                        key={option.id}
-                        onClick={() => toggleConstraint(option.id)}
-                        style={{
-                          padding: '8px 14px',
-                          borderRadius: 8,
-                          background: isSelected ? '#28a745' : '#fff',
-                          border: '2px solid #28a745',
-                          color: isSelected ? '#fff' : '#28a745',
-                          cursor: 'pointer',
-                          fontSize: 13,
-                          fontWeight: 500,
-                          transition: 'all 0.2s',
-                        }}
-                        title={option.description}
-                      >
-                        {isSelected && '✓ '}{option.label}
-                      </button>
-                    )
-                  })}
-              </div>
-            </div>
-          )}
-
-          {/* Task options */}
-          {constraintOptions.some(opt => opt.id.startsWith('TASK_')) && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>By Task</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {constraintOptions
-                  .filter(opt => opt.id.startsWith('TASK_'))
-                  .map(option => {
-                    const isSelected = selectedConstraints.has(option.id)
-                    return (
-                      <button
-                        key={option.id}
-                        onClick={() => toggleConstraint(option.id)}
-                        style={{
-                          padding: '8px 14px',
-                          borderRadius: 8,
-                          background: isSelected ? '#6c757d' : '#fff',
-                          border: '2px solid #6c757d',
-                          color: isSelected ? '#fff' : '#6c757d',
-                          cursor: 'pointer',
-                          fontSize: 13,
-                          fontWeight: 500,
-                          transition: 'all 0.2s',
-                        }}
-                        title={option.description}
-                      >
-                        {isSelected && '✓ '}{option.label}
-                      </button>
-                    )
-                  })}
               </div>
             </div>
           )}
@@ -555,9 +537,11 @@ export default function ChatView() {
             >
               Run Optimization
             </button>
-            {selectedConstraints.size > 0 && (
+            {(selectedConstraints.size > 0 || customConstraintText.trim()) && (
               <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>
-                {selectedConstraints.size} constraint{selectedConstraints.size > 1 ? 's' : ''} selected
+                {customConstraintText.trim()
+                  ? 'Custom constraint'
+                  : `${selectedConstraints.size} task${selectedConstraints.size > 1 ? 's' : ''} selected`}
               </span>
             )}
           </div>
