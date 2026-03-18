@@ -1,7 +1,7 @@
 from enum import Enum
-from app.state import PlannerState, CONSTRAINTS
+from app.state import PlannerState, CONSTRAINTS, CustomConstraint
 from app.categorize import get_categorize_service
-from app.constraints import get_constraints_service, ConstraintClarification
+from app.constraints import get_constraints_service, ConstraintClarification, get_constraint_matcher
 from app.optimize import get_optimizer_service
 from app.utility import UtilityQuestionnaire, QUESTIONS
 
@@ -211,21 +211,71 @@ class Orchestrator:
 
     def _handle_constraint_clarification(self, user_message: str):
         """Handle the constraint clarification phase (single constraint via chat)."""
-        constraint = self.constraint_clarification.parse_response(user_message)
+        result = self.constraint_clarification.parse_response(user_message)
 
-        if constraint is None:
-            # Default to ALL_CATEGORIES if not recognized
-            constraint = CONSTRAINTS["ALL_CATEGORIES"]
-            yield f"I'll use the default: **{constraint.button_label}**\n\n"
-
-        # Apply single constraint as a list
-        self.apply_constraints([constraint])
+        if result is None:
+            # No input - optimize without constraints
+            yield "No constraints specified. Optimizing for maximum utility...\n\n"
+            self._apply_no_constraints()
+        elif isinstance(result, CustomConstraint):
+            # Custom text constraint - use semantic matching
+            yield from self._handle_custom_constraint(result)
+        else:
+            # Standard task constraint
+            yield f"Applying constraint: **{result.button_label}**\n\n"
+            self.apply_constraints([result])
 
         # Move to optimize phase
         self.phase = WorkflowPhase.OPTIMIZE
         self._persist_state()
 
         yield from self._handle_optimize()
+
+    def _handle_custom_constraint(self, custom: CustomConstraint):
+        """Process a custom text constraint using semantic matching."""
+        matcher = get_constraint_matcher(self.state.tasks)
+        matched = matcher.match(custom)
+
+        if matched.is_matched:
+            yield f"I understood your constraint: \"{custom.raw_text}\"\n"
+            yield f"_{matched.match_explanation}_\n\n"
+
+            # Apply the matched constraints
+            self._apply_matched_constraint(matched)
+        else:
+            # No matches found - optimize without constraints
+            yield f"I couldn't match specific tasks or categories from: \"{custom.raw_text}\"\n"
+            yield "Optimizing for maximum utility instead...\n\n"
+            self._apply_no_constraints()
+
+    def _apply_matched_constraint(self, custom: CustomConstraint):
+        """Apply a matched custom constraint to the optimizer."""
+        router = self.optimizer_service.router
+
+        # Convert to optimizer parameters
+        mandatory_tasks = set(custom.matched_tasks) if custom.matched_tasks else None
+        mandatory_categories = set(custom.matched_categories) if custom.matched_categories else None
+
+        router.mandatory_tasks = mandatory_tasks
+        router.mandatory_categories = mandatory_categories
+
+        # Store in state for display
+        self.state.constraints = []  # Clear button constraints
+        # Store custom constraint info (using a Constraint for compatibility)
+        from app.state import Constraint
+        self.state.constraints.append(Constraint(
+            id="CUSTOM",
+            name="Custom Constraint",
+            description=custom.raw_text,
+            button_label=custom.match_explanation,
+        ))
+
+    def _apply_no_constraints(self):
+        """Apply no constraints (pure utility optimization)."""
+        router = self.optimizer_service.router
+        router.mandatory_tasks = None
+        router.mandatory_categories = None
+        self.state.constraints = []
 
     def apply_constraints(self, constraints: list):
         """Apply multiple constraints to the optimizer.

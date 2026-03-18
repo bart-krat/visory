@@ -88,7 +88,8 @@ class ConstraintSelectionRequest(BaseModel):
     """Request to submit selected constraints and run optimization."""
 
     session_id: str
-    constraint_ids: list[str]  # List of constraint IDs (e.g., ["CATEGORY_WORK", "TASK_Go to gym"])
+    constraint_ids: list[str] = []  # List of constraint IDs (e.g., ["TASK_Go to gym"])
+    custom_constraint: str | None = None  # Optional custom text constraint
 
 
 class ScheduledTask(BaseModel):

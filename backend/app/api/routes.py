@@ -139,7 +139,12 @@ def submit_constraints(request: ConstraintsSubmission):
 
 @router.get("/constraints/options/{session_id}")
 def get_constraint_options(session_id: str):
-    """Get available constraint options for UI based on session tasks."""
+    """Get available constraint options for UI based on session tasks.
+
+    Returns:
+        - options: List of task constraint buttons
+        - supports_custom_text: True (user can type custom constraints)
+    """
     from app.constraints import ConstraintClarification
 
     orchestrator = get_orchestrator(session_id)
@@ -148,14 +153,22 @@ def get_constraint_options(session_id: str):
 
     # Build clarification with current tasks for dynamic options
     clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
-    return {"options": clarification.get_options_for_ui()}
+    return {
+        "options": clarification.get_options_for_ui(),
+        "supports_custom_text": True,
+    }
 
 
 @router.post("/constraints/submit")
 def submit_constraint_selection(request: ConstraintSelectionRequest):
-    """Submit selected constraints and run optimization."""
-    from app.constraints import ConstraintClarification
-    from app.state import CONSTRAINTS
+    """Submit selected constraints and run optimization.
+
+    Accepts either:
+    - constraint_ids: List of task constraint IDs (button selections)
+    - custom_constraint: Free-form text describing constraints
+    """
+    from app.constraints import ConstraintClarification, get_constraint_matcher
+    from app.state import CustomConstraint
 
     orchestrator = get_orchestrator(request.session_id)
     if not orchestrator:
@@ -163,23 +176,62 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
 
     # Build clarification to parse constraint IDs
     clarification = ConstraintClarification(tasks=orchestrator.state.tasks)
+    router = orchestrator.optimizer_service.router
 
-    # Parse all selected constraint IDs into Constraint objects
-    constraints = []
-    for constraint_id in request.constraint_ids:
-        constraint = clarification.parse_response(constraint_id)
-        if constraint:
-            constraints.append(constraint)
-
-    # Default to NONE if no valid constraints
-    if not constraints:
-        constraints = [CONSTRAINTS["NONE"]]
-
-    # Apply constraints and run optimization via orchestrator
-    orchestrator.apply_constraints(constraints)
-
-    # Collect optimization output
     output_chunks = []
+
+    if request.custom_constraint:
+        # Handle custom text constraint via semantic matching
+        custom = CustomConstraint(raw_text=request.custom_constraint)
+        matcher = get_constraint_matcher(orchestrator.state.tasks)
+        matched = matcher.match(custom)
+
+        if matched.is_matched:
+            output_chunks.append(f"Understood: \"{custom.raw_text}\"\n")
+            output_chunks.append(f"{matched.match_explanation}\n\n")
+
+            # Apply matched constraints
+            router.mandatory_tasks = set(matched.matched_tasks) if matched.matched_tasks else None
+            router.mandatory_categories = set(matched.matched_categories) if matched.matched_categories else None
+
+            # Store for display
+            from app.state import Constraint
+            orchestrator.state.constraints = [Constraint(
+                id="CUSTOM",
+                name="Custom Constraint",
+                description=custom.raw_text,
+                button_label=matched.match_explanation,
+            )]
+        else:
+            output_chunks.append(f"Could not match: \"{custom.raw_text}\"\n")
+            output_chunks.append("Optimizing for maximum utility...\n\n")
+            router.mandatory_tasks = None
+            router.mandatory_categories = None
+            orchestrator.state.constraints = []
+
+    elif request.constraint_ids:
+        # Handle button-selected task constraints
+        constraints = []
+        for constraint_id in request.constraint_ids:
+            constraint = clarification.parse_response(constraint_id)
+            if constraint and not isinstance(constraint, CustomConstraint):
+                constraints.append(constraint)
+
+        if constraints:
+            orchestrator.apply_constraints(constraints)
+        else:
+            # No valid constraints - optimize without
+            router.mandatory_tasks = None
+            router.mandatory_categories = None
+            orchestrator.state.constraints = []
+
+    else:
+        # No constraints specified - optimize without
+        router.mandatory_tasks = None
+        router.mandatory_categories = None
+        orchestrator.state.constraints = []
+
+    # Run optimization
     for chunk in orchestrator.run_optimization():
         output_chunks.append(chunk)
 

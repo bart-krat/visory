@@ -61,6 +61,21 @@ class Constraint:
     button_label: str  # Short label for UI buttons
 
 
+@dataclass
+class CustomConstraint:
+    """A custom text-based constraint from user input.
+
+    These constraints need semantic matching to be converted
+    to knapsack-compatible parameters.
+    """
+    raw_text: str  # The original user input
+    matched_tasks: list[str] = field(default_factory=list)  # Task names matched
+    matched_categories: list[str] = field(default_factory=list)  # Categories matched
+    is_matched: bool = False  # Whether semantic matching was successful
+    match_confidence: float = 0.0  # Confidence score of the match (0-1)
+    match_explanation: str = ""  # Explanation of how/why it was matched
+
+
 # Registry of available constraints - add new options here
 CONSTRAINTS: dict[str, Constraint] = {
     "ALL_CATEGORIES": Constraint(
