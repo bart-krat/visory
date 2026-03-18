@@ -6,6 +6,7 @@ then uses an LLM to derive utility weights for work, health, and personal.
 import json
 from dataclasses import dataclass, field
 from app.chat import get_chat_service
+from app.utils import clean_json_response
 
 
 QUESTIONS = [
@@ -189,14 +190,7 @@ class UtilityQuestionnaire:
     def _parse_weights(self, response: str) -> UtilityWeights:
         """Parse the LLM response into UtilityWeights."""
         try:
-            # Clean response (remove markdown code blocks if present)
-            clean = response.strip()
-            if clean.startswith("```"):
-                clean = clean.split("```")[1]
-                if clean.startswith("json"):
-                    clean = clean[4:]
-            clean = clean.strip()
-
+            clean = clean_json_response(response)
             data = json.loads(clean)
 
             work = float(data.get("work", 100))

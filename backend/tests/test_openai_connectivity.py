@@ -44,51 +44,6 @@ class TestOpenAIConnectivity:
         assert "TestUser" in response
 
 
-class TestChatEndpoint:
-    """Test the /api/chat endpoint."""
-
-    def test_chat_endpoint_returns_response(self, client):
-        """Verify the chat endpoint returns a valid response."""
-        response = client.post(
-            "/api/chat",
-            json={"content": "Say hello"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "message" in data
-        assert "done" in data
-        assert data["done"] is True
-
-    def test_chat_endpoint_with_system_prompt(self, client):
-        """Verify system prompt is passed correctly."""
-        response = client.post(
-            "/api/chat",
-            json={
-                "content": "What are you?",
-                "system_prompt": "You are a helpful assistant named Visory.",
-            },
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "message" in data
-
-    def test_chat_endpoint_with_conversation_history(self, client):
-        """Verify conversation history is handled correctly."""
-        response = client.post(
-            "/api/chat",
-            json={
-                "content": "What did I just tell you?",
-                "conversation_history": [
-                    {"role": "user", "content": "Remember the code word: ALPHA"},
-                    {"role": "assistant", "content": "I'll remember ALPHA."},
-                ],
-            },
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "ALPHA" in data["message"]
-
-
 class TestHealthEndpoint:
     """Test the health endpoint."""
 

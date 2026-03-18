@@ -4,60 +4,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from app.state import ConstraintSet
 from app.api.schemas import (
-    ChatMessage,
-    ChatResponse,
-    CategorizeRequest,
-    CategorizeResponse,
-    CategorizedTask,
     WorkflowStartResponse,
     WorkflowMessageRequest,
     ConstraintsSubmission,
     ConstraintSelectionRequest,
 )
-from app.chat import get_chat_service
-from app.categorize import get_categorize_service
 from app.orchestrator import get_or_create_orchestrator, get_orchestrator
 
 router = APIRouter()
-
-
-@router.post("/chat", response_model=ChatResponse)
-def chat(message: ChatMessage):
-    """Chat endpoint for LLM interactions."""
-    try:
-        service = get_chat_service()
-
-        messages = [
-            {"role": msg.role, "content": msg.content}
-            for msg in message.conversation_history
-        ]
-        messages.append({"role": "user", "content": message.content})
-
-        response = service.chat(
-            messages=messages,
-            system_prompt=message.system_prompt,
-        )
-
-        return ChatResponse(message=response, done=True)
-
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat service error: {str(e)}")
-
-
-@router.post("/categorize", response_model=CategorizeResponse)
-def categorize(request: CategorizeRequest):
-    """Categorize tasks into work, health, or personal."""
-    try:
-        service = get_categorize_service()
-        result = service.categorize(request.tasks)
-        categorized = [CategorizedTask(**item) for item in result]
-        return CategorizeResponse(categorized_tasks=categorized)
-    except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Categorize service error: {str(e)}")
 
 
 @router.post("/workflow/start", response_model=WorkflowStartResponse)

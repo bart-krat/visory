@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from app.state import Task, TimeWindow, DailyPlan, ScheduledTask
+from app.utils import time_window_minutes
 
 
 class BaseOptimizer(ABC):
@@ -25,9 +26,7 @@ class BaseOptimizer(ABC):
 
     def _time_window_minutes(self, time_window: TimeWindow) -> int:
         """Convert TimeWindow to total available minutes."""
-        start_h, start_m = map(int, time_window.start_time.split(":"))
-        end_h, end_m = map(int, time_window.end_time.split(":"))
-        return (end_h * 60 + end_m) - (start_h * 60 + start_m)
+        return time_window_minutes(time_window.start_time, time_window.end_time)
 
     def _schedule_tasks(
         self,

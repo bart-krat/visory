@@ -1,5 +1,5 @@
 """Test the three optimizers with a sample task set."""
-from app.state import Task, TimeWindow, DEFAULT_UTILITY_WEIGHTS
+from app.state import Task, TimeWindow, ConstraintSet, DEFAULT_UTILITY_WEIGHTS
 from app.optimize import (
     SimpleOptimizer,
     GreedyOptimizer,
@@ -104,17 +104,19 @@ def test_router_auto_select():
 
     # 8hr window - all tasks fit → SIMPLE
     wide_window = TimeWindow("09:00", "17:00")
-    selected = router._select_optimizer(TASKS, wide_window)
+    no_constraints = ConstraintSet()
+    selected = router._select_optimizer(TASKS, wide_window, no_constraints)
     print(f"\n  8hr window: {selected.value}")
 
-    # 4hr window - tasks don't fit → KNAPSACK (with constraints)
+    # 4hr window - tasks don't fit + constraints → KNAPSACK
     tight_window = TimeWindow("09:00", "13:00")
-    selected = router._select_optimizer(TASKS, tight_window)
+    with_constraints = ConstraintSet()
+    with_constraints.mandatory_categories = {"health", "work", "personal"}
+    selected = router._select_optimizer(TASKS, tight_window, with_constraints)
     print(f"  4hr window (constraints): {selected.value}")
 
     # 4hr window - no constraints → GREEDY
-    router.require_all_categories = False
-    selected = router._select_optimizer(TASKS, tight_window)
+    selected = router._select_optimizer(TASKS, tight_window, no_constraints)
     print(f"  4hr window (no constraints): {selected.value}")
 
 

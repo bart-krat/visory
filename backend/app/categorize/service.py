@@ -1,6 +1,7 @@
 import json
 from app.chat import get_chat_service
 from app.state import Task, DEFAULT_UTILITY_WEIGHTS
+from app.utils import clean_json_response
 
 CATEGORIES = ["work", "health", "personal"]
 
@@ -54,13 +55,7 @@ class CategorizeService:
 
         # Parse JSON response
         try:
-            content = response.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            content = content.strip()
-
+            content = clean_json_response(response)
             result = json.loads(content)
 
             # Build Task objects

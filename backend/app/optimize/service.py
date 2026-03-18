@@ -2,8 +2,7 @@
 
 Uses OptimizerRouter to auto-select the appropriate optimizer.
 """
-from app.state import Task, TimeWindow, DailyPlan
-from app.optimize.router import OptimizerRouter, OptimizerType
+from app.optimize.router import OptimizerRouter
 
 
 class OptimizerService:
@@ -18,33 +17,6 @@ class OptimizerService:
     def __init__(self):
         """Initialize the optimizer service."""
         self.router = OptimizerRouter()
-
-    def create_optimizer(self, require_all_categories: bool = True) -> None:
-        """Configure the optimizer.
-
-        Args:
-            require_all_categories: Whether to enforce category coverage.
-        """
-        self.router.require_all_categories = require_all_categories
-
-    def run_optimizer(
-        self,
-        tasks: list[Task],
-        time_window: TimeWindow,
-    ) -> DailyPlan:
-        """Run optimization on tasks.
-
-        Auto-selects the appropriate optimizer based on task/window fit
-        and constraint requirements.
-
-        Args:
-            tasks: Tasks with name, category, utility, and duration.
-            time_window: Available time window.
-
-        Returns:
-            Optimized DailyPlan.
-        """
-        return self.router.optimize(tasks, time_window, optimizer_type=None)
 
 
 _optimizer_service: OptimizerService | None = None

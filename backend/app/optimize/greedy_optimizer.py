@@ -1,5 +1,6 @@
 from app.state import Task, TimeWindow, DailyPlan
 from app.optimize.base import BaseOptimizer
+from app.utils import CATEGORY_ORDER
 
 
 class GreedyOptimizer(BaseOptimizer):
@@ -46,7 +47,6 @@ class GreedyOptimizer(BaseOptimizer):
                 remaining_time -= 5
 
         # Sort selected tasks by category priority for scheduling
-        category_order = {"health": 0, "work": 1, "personal": 2}
-        selected.sort(key=lambda t: category_order.get(t.category, 2))
+        selected.sort(key=lambda t: CATEGORY_ORDER.get(t.category, 2))
 
         return self._schedule_tasks(selected, time_window)

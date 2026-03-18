@@ -7,6 +7,7 @@ from functools import lru_cache
 
 from app.state import Task, TimeWindow, DailyPlan
 from app.optimize.base import BaseOptimizer
+from app.utils import CATEGORY_ORDER
 
 
 class KnapsackOptimizer(BaseOptimizer):
@@ -63,8 +64,7 @@ class KnapsackOptimizer(BaseOptimizer):
             return DailyPlan(schedule=[], time_window=time_window)
 
         # Sort by category for nice presentation
-        category_order = {"health": 0, "work": 1, "personal": 2}
-        selected.sort(key=lambda t: category_order.get(t.category, 2))
+        selected.sort(key=lambda t: CATEGORY_ORDER.get(t.category, 2))
 
         return self._schedule_tasks(selected, time_window, self.buffer_minutes)
 

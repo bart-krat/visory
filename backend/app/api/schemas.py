@@ -1,47 +1,6 @@
 from pydantic import BaseModel
 
 
-class ConversationMessage(BaseModel):
-    """A single message in a conversation."""
-
-    role: str  # "user" or "assistant"
-    content: str
-
-
-class ChatMessage(BaseModel):
-    """Request payload for chat endpoint."""
-
-    content: str
-    conversation_history: list[ConversationMessage] = []
-    system_prompt: str | None = None
-
-
-class ChatResponse(BaseModel):
-    """Response from chat endpoint."""
-
-    message: str
-    done: bool
-
-
-class CategorizeRequest(BaseModel):
-    """Request payload for categorize endpoint."""
-
-    tasks: list[str]
-
-
-class CategorizedTask(BaseModel):
-    """A single categorized task."""
-
-    task: str
-    category: str  # "work", "health", or "personal"
-
-
-class CategorizeResponse(BaseModel):
-    """Response from categorize endpoint."""
-
-    categorized_tasks: list[CategorizedTask]
-
-
 class WorkflowStartResponse(BaseModel):
     """Response when starting a new workflow."""
 
@@ -55,16 +14,6 @@ class WorkflowMessageRequest(BaseModel):
 
     session_id: str
     message: str
-
-
-class Task(BaseModel):
-    """A task with all attributes for optimization."""
-
-    name: str
-    duration: int  # in minutes
-    utility: float
-    category: str  # "work", "health", or "personal"
-    time_slot: int | None = None  # optional fixed start time (minutes from midnight)
 
 
 class TaskConstraintInput(BaseModel):
@@ -90,21 +39,3 @@ class ConstraintSelectionRequest(BaseModel):
     session_id: str
     constraint_ids: list[str] = []  # List of constraint IDs (e.g., ["TASK_Go to gym"])
     custom_constraint: str | None = None  # Optional custom text constraint
-
-
-class ScheduledTask(BaseModel):
-    """A task scheduled at a specific time."""
-
-    task: str
-    category: str
-    start_time: str  # "HH:MM"
-    end_time: str    # "HH:MM"
-    duration_minutes: int
-
-
-class DailyPlan(BaseModel):
-    """The optimized daily plan."""
-
-    schedule: list[ScheduledTask]
-    time_window_start: str | None = None
-    time_window_end: str | None = None

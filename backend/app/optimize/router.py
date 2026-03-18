@@ -7,6 +7,7 @@ from app.optimize.simple_optimizer import SimpleOptimizer
 from app.optimize.greedy_optimizer import GreedyOptimizer
 from app.optimize.knapsack_optimizer import KnapsackOptimizer
 from app.optimize.enumeration_optimizer import EnumerationOptimizer
+from app.utils import time_window_minutes
 
 
 class OptimizerType(str, Enum):
@@ -141,11 +142,9 @@ class OptimizerRouter:
         else:
             return OptimizerType.GREEDY
 
-    def _time_window_minutes(self, time_window: TimeWindow) -> int:
+    def _time_window_minutes(self, tw: TimeWindow) -> int:
         """Convert TimeWindow to total available minutes."""
-        start_h, start_m = map(int, time_window.start_time.split(":"))
-        end_h, end_m = map(int, time_window.end_time.split(":"))
-        return (end_h * 60 + end_m) - (start_h * 60 + start_m)
+        return time_window_minutes(tw.start_time, tw.end_time)
 
 
 _router: OptimizerRouter | None = None

@@ -1,6 +1,7 @@
 import json
 from app.state import Task, TimeWindow
 from app.chat import get_chat_service
+from app.utils import clean_json_response
 
 
 CONSTRAINTS_SYSTEM_PROMPT = """You are Visory, helping users plan their day. The user has provided their tasks which have been categorized.
@@ -17,32 +18,6 @@ class ConstraintsService:
 
     def __init__(self):
         self.chat_service = get_chat_service()
-
-    def generate_constraints_question(self, tasks: list[Task]):
-        """Generate a streaming LLM question about task constraints.
-
-        Args:
-            tasks: The user's categorized tasks.
-
-        Yields:
-            String chunks of the LLM response.
-        """
-        task_list = "\n".join(
-            f"- {t.name} ({t.category})" for t in tasks
-        )
-
-        prompt = f"""The user has these tasks for today:
-{task_list}
-
-Ask them how long each task will take and what time window they have available today. Be friendly and concise."""
-
-        messages = [{"role": "user", "content": prompt}]
-
-        for chunk in self.chat_service.chat_stream(
-            messages=messages,
-            system_prompt=CONSTRAINTS_SYSTEM_PROMPT,
-        ):
-            yield chunk
 
     def parse_constraints_response(
         self,
@@ -75,13 +50,7 @@ If information is missing, return: {"incomplete": true, "missing": ["list of wha
         )
 
         try:
-            content = response.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            content = content.strip()
-
+            content = clean_json_response(response)
             data = json.loads(content)
 
             if data.get("incomplete"):

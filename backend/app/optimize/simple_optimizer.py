@@ -1,5 +1,6 @@
 from app.state import Task, TimeWindow, DailyPlan
 from app.optimize.base import BaseOptimizer
+from app.utils import CATEGORY_ORDER
 
 
 class SimpleOptimizer(BaseOptimizer):
@@ -9,8 +10,6 @@ class SimpleOptimizer(BaseOptimizer):
     Schedules all tasks sequentially with buffer time between them.
     No selection logic - includes all tasks that fit.
     """
-
-    CATEGORY_ORDER = {"health": 0, "work": 1, "personal": 2}
 
     def __init__(self, buffer_minutes: int = 5):
         self.buffer_minutes = buffer_minutes
@@ -26,7 +25,7 @@ class SimpleOptimizer(BaseOptimizer):
         # Sort by category: health, work, personal
         sorted_tasks = sorted(
             tasks,
-            key=lambda t: self.CATEGORY_ORDER.get(t.category, 2),
+            key=lambda t: CATEGORY_ORDER.get(t.category, 2),
         )
 
         # Filter to tasks that fit in time window
