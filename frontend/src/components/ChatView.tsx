@@ -29,21 +29,52 @@ export default function ChatView() {
   const [timeWindowStart, setTimeWindowStart] = useState('09:00')
   const [timeWindowEnd, setTimeWindowEnd] = useState('17:00')
 
-  // Start workflow on mount
+  // Create session on mount (starts in welcome phase)
   useEffect(() => {
-    const startWorkflow = async () => {
+    const createSession = async () => {
       try {
         const res = await fetch('/api/workflow/start', { method: 'POST' })
         const data = await res.json()
         setSessionId(data.session_id)
         setPhase(data.phase)
-        setMessages([{ role: 'assistant', content: data.message }])
+        // Don't show welcome message in chat - we'll show buttons instead
       } catch {
-        setMessages([{ role: 'assistant', content: 'Error starting workflow. Is the server running?' }])
+        setMessages([{ role: 'assistant', content: 'Error starting. Is the server running?' }])
       }
     }
-    startWorkflow()
+    createSession()
   }, [])
+
+  // Start utility questionnaire
+  const startQuestionnaire = async () => {
+    if (!sessionId) return
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/utility/start?session_id=${sessionId}`, { method: 'POST' })
+      const data = await res.json()
+      setPhase(data.phase)
+      setQuestionnaireProgress(data.progress)
+      setMessages([{ role: 'assistant', content: data.message }])
+    } catch {
+      setMessages([{ role: 'assistant', content: 'Error starting questionnaire' }])
+    }
+    setLoading(false)
+  }
+
+  // Start planning directly
+  const startPlanning = async () => {
+    if (!sessionId) return
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/planning/start?session_id=${sessionId}`, { method: 'POST' })
+      const data = await res.json()
+      setPhase(data.phase)
+      setMessages([{ role: 'assistant', content: data.message }])
+    } catch {
+      setMessages([{ role: 'assistant', content: 'Error starting planning' }])
+    }
+    setLoading(false)
+  }
 
   // Fetch tasks when entering constraints phase
   useEffect(() => {
@@ -117,36 +148,58 @@ export default function ChatView() {
     setLoading(true)
 
     try {
-      const res = await fetch('/api/workflow/message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message: msgToSend })
-      })
-
-      const reader = res.body?.getReader()
-      if (!reader) throw new Error('No reader')
-
-      const decoder = new TextDecoder()
-      let assistantContent = ''
-
-      setMessages(prev => [...prev, { role: 'assistant', content: '' }])
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        const chunk = decoder.decode(value)
-        assistantContent += chunk
-
-        setMessages(prev => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: assistantContent }
-          return updated
+      // Use utility endpoint for questionnaire, workflow endpoint for other phases
+      if (phase === 'questionnaire') {
+        const res = await fetch('/api/utility/message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, message: msgToSend })
         })
+        const data = await res.json()
+
+        setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+        setPhase(data.phase)
+
+        if (data.progress) {
+          setQuestionnaireProgress(data.progress)
+        }
+
+        // If questionnaire complete, show option to start planning
+        if (data.is_complete) {
+          setQuestionnaireProgress(null)
+        }
+      } else {
+        // Use streaming workflow endpoint for other phases
+        const res = await fetch('/api/workflow/message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, message: msgToSend })
+        })
+
+        const reader = res.body?.getReader()
+        if (!reader) throw new Error('No reader')
+
+        const decoder = new TextDecoder()
+        let assistantContent = ''
+
+        setMessages(prev => [...prev, { role: 'assistant', content: '' }])
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value)
+          assistantContent += chunk
+
+          setMessages(prev => {
+            const updated = [...prev]
+            updated[updated.length - 1] = { role: 'assistant', content: assistantContent }
+            return updated
+          })
+        }
+
+        await fetchCurrentPhase()
       }
-
-      await fetchCurrentPhase()
-
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error connecting to server' }])
     }
@@ -300,8 +353,9 @@ export default function ChatView() {
 
   const getPhaseLabel = () => {
     const labels: Record<string, string> = {
+      'welcome': 'Welcome',
       'questionnaire': 'Values Assessment',
-      'evaluation': 'Analyzing...',
+      'evaluation_complete': 'Assessment Complete',
       'collect_tasks': 'Task Collection',
       'constraints': 'Time Constraints',
       'constraint_clarification': 'Optimization Preferences',
@@ -309,6 +363,60 @@ export default function ChatView() {
       'complete': 'Complete',
     }
     return labels[phase] || phase
+  }
+
+  // Welcome screen
+  if (phase === 'welcome') {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+        <h2 style={{ marginBottom: 8 }}>Welcome to Visory!</h2>
+        <p style={{ color: '#666', marginBottom: 32 }}>I'll help you plan your perfect day.</p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 320, margin: '0 auto' }}>
+          <button
+            onClick={startQuestionnaire}
+            disabled={loading || !sessionId}
+            style={{
+              padding: '16px 24px',
+              borderRadius: 12,
+              background: '#007bff',
+              color: '#fff',
+              border: 'none',
+              cursor: loading ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 500,
+            }}
+          >
+            Let AI Get to Know You
+          </button>
+          <p style={{ fontSize: 13, color: '#888', margin: '-8px 0 8px 0' }}>
+            Answer a few questions so I can understand your priorities
+          </p>
+
+          <button
+            onClick={startPlanning}
+            disabled={loading || !sessionId}
+            style={{
+              padding: '16px 24px',
+              borderRadius: 12,
+              background: '#fff',
+              color: '#007bff',
+              border: '2px solid #007bff',
+              cursor: loading ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 500,
+            }}
+          >
+            Plan Your Day
+          </button>
+          <p style={{ fontSize: 13, color: '#888', margin: '-8px 0 0 0' }}>
+            Jump straight into planning your tasks
+          </p>
+        </div>
+
+        {loading && <div style={{ marginTop: 24, color: '#666' }}>Loading...</div>}
+      </div>
+    )
   }
 
   return (
@@ -319,7 +427,7 @@ export default function ChatView() {
             Phase: {getPhaseLabel()}
           </div>
           {/* Questionnaire progress bar */}
-          {(phase === 'questionnaire' || phase === 'evaluation') && questionnaireProgress && (
+          {phase === 'questionnaire' && questionnaireProgress && (
             <div style={{ marginTop: 4 }}>
               <div style={{
                 height: 6,
@@ -545,6 +653,28 @@ export default function ChatView() {
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Start Planning button after questionnaire complete */}
+      {phase === 'evaluation_complete' && (
+        <div style={{ textAlign: 'center', marginBottom: 16 }}>
+          <button
+            onClick={startPlanning}
+            disabled={loading}
+            style={{
+              padding: '14px 32px',
+              borderRadius: 8,
+              background: '#007bff',
+              color: '#fff',
+              border: 'none',
+              cursor: loading ? 'default' : 'pointer',
+              fontSize: 16,
+              fontWeight: 500,
+            }}
+          >
+            Plan Your Day
+          </button>
         </div>
       )}
 

@@ -8,15 +8,20 @@ from app.api.schemas import (
     WorkflowMessageRequest,
     ConstraintsSubmission,
     ConstraintSelectionRequest,
+    UtilityMessageRequest,
 )
 from app.orchestrator import get_or_create_orchestrator, get_orchestrator
+from app.utility import UtilityQuestionnaire
 
 router = APIRouter()
+
+# Session storage for utility questionnaires (separate from orchestrator)
+_utility_sessions: dict[str, UtilityQuestionnaire] = {}
 
 
 @router.post("/workflow/start", response_model=WorkflowStartResponse)
 def workflow_start():
-    """Start a new planning workflow session."""
+    """Start a new session and return welcome message."""
     session_id = str(uuid.uuid4())
     orchestrator = get_or_create_orchestrator(session_id)
     initial_message = orchestrator.start()
@@ -26,6 +31,129 @@ def workflow_start():
         message=initial_message,
         phase=orchestrator.get_phase().value,
     )
+
+
+@router.post("/utility/start")
+def utility_start(session_id: str):
+    """Start the utility questionnaire for a session.
+
+    This is a separate flow from the main planning workflow.
+    Results are saved to the session state for use in planning.
+    """
+    # Ensure orchestrator exists for this session
+    orchestrator = get_orchestrator(session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Create questionnaire for this session
+    questionnaire = UtilityQuestionnaire()
+    _utility_sessions[session_id] = questionnaire
+
+    first_question = questionnaire.get_current_question()
+    q_num = questionnaire.get_question_number()
+    total = questionnaire.get_total_questions()
+
+    return {
+        "session_id": session_id,
+        "message": f"Question {q_num}/{total}: {first_question}",
+        "phase": "questionnaire",
+        "progress": {"current": q_num, "total": total},
+    }
+
+
+@router.post("/utility/message")
+def utility_message(request: UtilityMessageRequest):
+    """Submit an answer to the utility questionnaire.
+
+    Returns the next question or evaluation results when complete.
+    """
+    questionnaire = _utility_sessions.get(request.session_id)
+    if not questionnaire:
+        raise HTTPException(status_code=404, detail="Questionnaire session not found")
+
+    orchestrator = get_orchestrator(request.session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Record the Q&A
+    current_q = questionnaire.get_current_question()
+    orchestrator.state.questionnaire_answers.append({
+        "question": current_q,
+        "answer": request.message,
+    })
+
+    # Submit answer and get next question
+    next_question = questionnaire.submit_answer(request.message)
+
+    if next_question:
+        q_num = questionnaire.get_question_number()
+        total = questionnaire.get_total_questions()
+        return {
+            "message": f"Question {q_num}/{total}: {next_question}",
+            "phase": "questionnaire",
+            "progress": {"current": q_num, "total": total},
+            "is_complete": False,
+        }
+    else:
+        # Questionnaire complete - evaluate and save to state
+        try:
+            weights = questionnaire.evaluate()
+            orchestrator.state.utility_weights = {
+                "work": weights.work,
+                "health": weights.health,
+                "personal": weights.personal,
+            }
+            orchestrator._persist_state()
+
+            # Clean up questionnaire session
+            del _utility_sessions[request.session_id]
+
+            return {
+                "message": f"""Thank you! Based on your answers, here's how I understand your priorities:
+
+  Work:     {weights.work:.0f}/300
+  Health:   {weights.health:.0f}/300
+  Personal: {weights.personal:.0f}/300
+
+_{weights.reasoning}_
+
+Your preferences have been saved. You can now plan your day!""",
+                "phase": "evaluation_complete",
+                "is_complete": True,
+                "weights": weights.to_dict(),
+            }
+        except Exception as e:
+            # Use default weights on error
+            orchestrator.state.utility_weights = {"work": 100, "health": 100, "personal": 100}
+            orchestrator._persist_state()
+            del _utility_sessions[request.session_id]
+
+            return {
+                "message": "I had trouble analyzing your responses. Using balanced weights. You can now plan your day!",
+                "phase": "evaluation_complete",
+                "is_complete": True,
+                "weights": {"work": 100, "health": 100, "personal": 100},
+            }
+
+
+@router.post("/planning/start")
+def planning_start(session_id: str):
+    """Start the planning workflow for a session.
+
+    Uses utility weights from questionnaire if completed, otherwise defaults.
+    """
+    orchestrator = get_orchestrator(session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    message = orchestrator.start_planning()
+
+    return {
+        "session_id": session_id,
+        "message": message,
+        "phase": orchestrator.get_phase().value,
+        "utility_weights": orchestrator.state.utility_weights,
+    }
 
 
 @router.post("/workflow/message")
@@ -179,13 +307,14 @@ def workflow_state(session_id: str):
 
     state = orchestrator.get_state()
 
-    # Get questionnaire progress
+    # Get questionnaire progress from utility session if active
     questionnaire_progress = None
-    if orchestrator.questionnaire:
+    questionnaire = _utility_sessions.get(session_id)
+    if questionnaire:
         questionnaire_progress = {
-            "current": orchestrator.questionnaire.get_question_number(),
-            "total": orchestrator.questionnaire.get_total_questions(),
-            "is_complete": orchestrator.questionnaire.is_complete(),
+            "current": questionnaire.get_question_number(),
+            "total": questionnaire.get_total_questions(),
+            "is_complete": questionnaire.is_complete(),
         }
 
     return {

@@ -39,3 +39,10 @@ class ConstraintSelectionRequest(BaseModel):
     session_id: str
     constraint_ids: list[str] = []  # List of constraint IDs (e.g., ["TASK_Go to gym"])
     custom_constraint: str | None = None  # Optional custom text constraint
+
+
+class UtilityMessageRequest(BaseModel):
+    """Request to send a message to the utility questionnaire."""
+
+    session_id: str
+    message: str

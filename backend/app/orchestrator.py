@@ -9,10 +9,10 @@ from app.state import (
 from app.categorize import get_categorize_service
 from app.constraints import get_constraints_service, ConstraintClarification, get_constraint_matcher
 from app.optimize import get_optimizer_service
-from app.utility import UtilityQuestionnaire
 
 
 class WorkflowPhase(str, Enum):
+    WELCOME = "welcome"
     QUESTIONNAIRE = "questionnaire"
     EVALUATION = "evaluation"
     COLLECT_TASKS = "collect_tasks"
@@ -24,9 +24,16 @@ class WorkflowPhase(str, Enum):
 
 WELCOME_MESSAGE = """Welcome to Visory! I'll help you plan your perfect day.
 
-First, let me understand what matters most to you by asking a few questions about your values and priorities.
+Choose how you'd like to get started:
+- **Let AI Get to Know You**: Answer a few questions so I can understand your priorities
+- **Plan Your Day**: Jump straight into planning your tasks
+"""
+
+QUESTIONNAIRE_INTRO = """Great! Let me understand what matters most to you by asking a few questions about your values and priorities.
 
 """
+
+PLANNING_INTRO = "What tasks do you have on the agenda today?"
 
 TASKS_MESSAGE = "Great! Now, what tasks do you have on the agenda today?"
 
@@ -37,9 +44,8 @@ class Orchestrator:
     def __init__(self, session_id: str = ""):
         self.session_id = session_id
         self.state = PlannerState(session_id=session_id)
-        self.phase = WorkflowPhase.QUESTIONNAIRE
+        self.phase = WorkflowPhase.WELCOME
         self.conversation_history: list[dict] = []
-        self.questionnaire = UtilityQuestionnaire()
         self.categorize_service = get_categorize_service()
         self.constraints_service = get_constraints_service()
         self.constraint_clarification: ConstraintClarification | None = None
@@ -62,25 +68,28 @@ class Orchestrator:
         return self.phase
 
     def start(self) -> str:
-        """Start the workflow, return initial message with first question."""
-        self.phase = WorkflowPhase.QUESTIONNAIRE
+        """Start the workflow, return welcome message."""
+        self.phase = WorkflowPhase.WELCOME
         self._persist_state()
+        return WELCOME_MESSAGE
 
-        first_question = self.questionnaire.get_current_question()
-        q_num = self.questionnaire.get_question_number()
-        total = self.questionnaire.get_total_questions()
+    def start_planning(self) -> str:
+        """Start the planning workflow (task collection phase).
 
-        return f"{WELCOME_MESSAGE}Question {q_num}/{total}: {first_question}"
+        Uses utility weights from state if available, otherwise defaults.
+        """
+        if not self.state.utility_weights:
+            self.state.utility_weights = {"work": 100, "health": 100, "personal": 100}
+
+        self.phase = WorkflowPhase.COLLECT_TASKS
+        self._persist_state()
+        return PLANNING_INTRO
 
     def process_message(self, user_message: str):
         """Process a user message based on current phase."""
         self.conversation_history.append({"role": "user", "content": user_message})
 
-        if self.phase == WorkflowPhase.QUESTIONNAIRE:
-            yield from self._handle_questionnaire(user_message)
-        elif self.phase == WorkflowPhase.EVALUATION:
-            yield from self._handle_evaluation()
-        elif self.phase == WorkflowPhase.COLLECT_TASKS:
+        if self.phase == WorkflowPhase.COLLECT_TASKS:
             yield from self._handle_collect_tasks(user_message)
         elif self.phase == WorkflowPhase.CONSTRAINTS:
             yield from self._handle_constraints(user_message)
@@ -88,60 +97,6 @@ class Orchestrator:
             yield from self._handle_constraint_clarification(user_message)
         elif self.phase == WorkflowPhase.OPTIMIZE:
             yield from self._handle_optimize()
-
-    def _handle_questionnaire(self, user_message: str):
-        """Handle the questionnaire phase."""
-        current_q = self.questionnaire.get_current_question()
-        self.state.questionnaire_answers.append({
-            "question": current_q,
-            "answer": user_message,
-        })
-
-        next_question = self.questionnaire.submit_answer(user_message)
-
-        if next_question:
-            q_num = self.questionnaire.get_question_number()
-            total = self.questionnaire.get_total_questions()
-            response = f"Question {q_num}/{total}: {next_question}"
-            yield response
-            self.conversation_history.append({"role": "assistant", "content": response})
-        else:
-            self.phase = WorkflowPhase.EVALUATION
-            self._persist_state()
-            yield from self._handle_evaluation()
-
-    def _handle_evaluation(self):
-        """Handle the evaluation phase."""
-        yield "Thank you! Analyzing your responses to understand your priorities...\n\n"
-
-        try:
-            weights = self.questionnaire.evaluate()
-            self.state.utility_weights = {
-                "work": weights.work,
-                "health": weights.health,
-                "personal": weights.personal,
-            }
-            self._persist_state()
-
-            yield f"Based on your answers, here's how I understand your priorities:\n\n"
-            yield f"  Work:     {weights.work:.0f}/300\n"
-            yield f"  Health:   {weights.health:.0f}/300\n"
-            yield f"  Personal: {weights.personal:.0f}/300\n\n"
-
-            if weights.reasoning:
-                yield f"_{weights.reasoning}_\n\n"
-
-            self.phase = WorkflowPhase.COLLECT_TASKS
-            self._persist_state()
-            yield TASKS_MESSAGE
-            self.conversation_history.append({"role": "assistant", "content": TASKS_MESSAGE})
-
-        except Exception:
-            yield f"I had trouble analyzing your responses. Using balanced weights.\n\n"
-            self.state.utility_weights = {"work": 100, "health": 100, "personal": 100}
-            self.phase = WorkflowPhase.COLLECT_TASKS
-            self._persist_state()
-            yield TASKS_MESSAGE
 
     def _handle_collect_tasks(self, user_message: str):
         """Handle the task collection phase."""
