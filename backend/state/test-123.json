@@ -1,0 +1,36 @@
+{
+  "session_id": "test-123",
+  "current_phase": "optimize",
+  "updated_at": "2026-03-18T11:47:23.597352",
+  "raw_tasks": [
+    "go for run",
+    "cost report",
+    "watch movie"
+  ],
+  "tasks": [
+    {
+      "name": "go for run",
+      "category": "health",
+      "utility": 70,
+      "duration": 60
+    },
+    {
+      "name": "cost report",
+      "category": "work",
+      "utility": 80,
+      "duration": 120
+    },
+    {
+      "name": "watch movie",
+      "category": "leisure",
+      "utility": 85,
+      "duration": 180
+    }
+  ],
+  "time_window": {
+    "start_time": "09:00",
+    "end_time": "17:00"
+  },
+  "optimizer_type": "simple",
+  "daily_plan": null
+}

@@ -1,5 +1,6 @@
 import json
 from app.chat import get_chat_service
+from app.state import Task, CATEGORY_UTILITY
 
 CATEGORIES = ["work", "health", "leisure"]
 
@@ -22,19 +23,20 @@ class CategorizeService:
     def __init__(self):
         self.chat_service = get_chat_service()
 
-    def categorize(self, tasks: list[str]) -> list[dict]:
+    def categorize(self, task_names: list[str]) -> list[Task]:
         """Categorize a list of tasks.
 
         Args:
-            tasks: List of task strings to categorize.
+            task_names: List of task name strings to categorize.
 
         Returns:
-            List of dicts with 'task' and 'category' keys.
+            List of Task objects with name, category, and utility set.
+            Duration is left at 0 (filled by constraints phase).
         """
-        if not tasks:
+        if not task_names:
             return []
 
-        prompt = f"Categorize these tasks: {json.dumps(tasks)}"
+        prompt = f"Categorize these tasks: {json.dumps(task_names)}"
 
         response = self.chat_service.simple_chat(
             user_message=prompt,
@@ -43,7 +45,6 @@ class CategorizeService:
 
         # Parse JSON response
         try:
-            # Handle markdown code blocks if present
             content = response.strip()
             if content.startswith("```"):
                 content = content.split("```")[1]
@@ -53,20 +54,24 @@ class CategorizeService:
 
             result = json.loads(content)
 
-            # Validate structure
-            validated = []
+            # Build Task objects
+            tasks = []
             for item in result:
-                task = item.get("task", "")
+                name = item.get("task", "")
                 category = item.get("category", "").lower()
                 if category not in CATEGORIES:
                     category = "leisure"  # Default fallback
-                validated.append({"task": task, "category": category})
+                utility = CATEGORY_UTILITY.get(category, 85.0)
+                tasks.append(Task(name=name, category=category, utility=utility))
 
-            return validated
+            return tasks
 
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
+        except (json.JSONDecodeError, KeyError, TypeError):
             # Fallback: return tasks as uncategorized leisure
-            return [{"task": t, "category": "leisure"} for t in tasks]
+            return [
+                Task(name=t, category="leisure", utility=CATEGORY_UTILITY["leisure"])
+                for t in task_names
+            ]
 
 
 _categorize_service: CategorizeService | None = None

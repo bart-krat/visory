@@ -1,0 +1,11 @@
+{
+  "session_id": "7b0254f1-b016-4b37-8ee4-4a630174bf38",
+  "current_phase": "collect_tasks",
+  "updated_at": "2026-03-18T12:09:17.566200",
+  "raw_tasks": [],
+  "tasks": [],
+  "time_window": null,
+  "constraint": null,
+  "optimizer_type": null,
+  "daily_plan": null
+}

@@ -93,6 +93,14 @@ def workflow_message(request: WorkflowMessageRequest):
     )
 
 
+@router.get("/constraints/options")
+def get_constraint_options():
+    """Get available constraint options for UI."""
+    from app.constraints import ConstraintClarification
+    clarification = ConstraintClarification()
+    return {"options": clarification.get_options_for_ui()}
+
+
 @router.get("/workflow/{session_id}/state")
 def workflow_state(session_id: str):
     """Get the current state of a workflow session."""
@@ -104,18 +112,25 @@ def workflow_state(session_id: str):
     return {
         "phase": orchestrator.get_phase().value,
         "raw_tasks": state.raw_tasks,
-        "categorized_tasks": [
-            {"task": t.task, "category": t.category}
-            for t in state.categorized_tasks
+        "tasks": [
+            {
+                "name": t.name,
+                "category": t.category,
+                "utility": t.utility,
+                "duration": t.duration,
+            }
+            for t in state.tasks
         ],
-        "tasks_with_duration": [
-            {"task": t.task, "category": t.category, "duration_minutes": t.duration_minutes}
-            for t in state.tasks_with_duration
-        ] if state.tasks_with_duration else [],
         "time_window": {
             "start_time": state.time_window.start_time,
             "end_time": state.time_window.end_time,
         } if state.time_window else None,
+        "constraint": {
+            "id": state.constraint.id,
+            "name": state.constraint.name,
+            "description": state.constraint.description,
+        } if state.constraint else None,
+        "optimizer_type": state.optimizer_type,
         "daily_plan": {
             "schedule": [
                 {

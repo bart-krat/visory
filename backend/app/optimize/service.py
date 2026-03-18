@@ -1,64 +1,55 @@
-"""Optimizer service facade for backward compatibility.
+"""Optimizer service.
 
-Wraps the OptimizerRouter and converts between TaskWithDuration and Task.
+Uses OptimizerRouter to auto-select the appropriate optimizer.
 """
-from app.state import Task, TaskWithDuration, TimeWindow, DailyPlan
-from app.optimize.router import OptimizerRouter, OptimizerType, get_optimizer_router
-
-
-# Default utility values by category
-DEFAULT_UTILITY = {
-    "health": 10.0,
-    "work": 8.0,
-    "leisure": 5.0,
-}
+from app.state import Task, TimeWindow, DailyPlan
+from app.optimize.router import OptimizerRouter, OptimizerType
 
 
 class OptimizerService:
-    """Service facade for task optimization.
+    """Service for task optimization.
 
-    Converts TaskWithDuration to Task and delegates to OptimizerRouter.
+    Auto-selects optimizer based on:
+    - Tasks fit in window → SimpleOptimizer
+    - Tasks don't fit + constraints → KnapsackOptimizer
+    - Tasks don't fit + no constraints → GreedyOptimizer
     """
 
-    def __init__(self, optimizer_type: OptimizerType = OptimizerType.SIMPLE):
-        self.router = get_optimizer_router()
-        self.optimizer_type = optimizer_type
-
-    def create_optimizer(self, optimizer_type: OptimizerType | None = None) -> None:
-        """Set the optimizer type to use.
+    def __init__(self, require_all_categories: bool = True):
+        """Initialize the optimizer service.
 
         Args:
-            optimizer_type: Which optimizer to use. Defaults to SIMPLE.
+            require_all_categories: Whether to require at least one task
+                                    from each category (health, work, leisure).
         """
-        if optimizer_type:
-            self.optimizer_type = optimizer_type
+        self.router = OptimizerRouter(require_all_categories=require_all_categories)
+
+    def create_optimizer(self, require_all_categories: bool = True) -> None:
+        """Configure the optimizer.
+
+        Args:
+            require_all_categories: Whether to enforce category coverage.
+        """
+        self.router.require_all_categories = require_all_categories
 
     def run_optimizer(
         self,
-        tasks_with_duration: list[TaskWithDuration],
+        tasks: list[Task],
         time_window: TimeWindow,
     ) -> DailyPlan:
         """Run optimization on tasks.
 
+        Auto-selects the appropriate optimizer based on task/window fit
+        and constraint requirements.
+
         Args:
-            tasks_with_duration: Tasks with categories and durations.
+            tasks: Tasks with name, category, utility, and duration.
             time_window: Available time window.
 
         Returns:
             Optimized DailyPlan.
         """
-        # Convert TaskWithDuration to Task
-        tasks = [
-            Task(
-                name=t.task,
-                duration=t.duration_minutes,
-                utility=DEFAULT_UTILITY.get(t.category, 5.0),
-                category=t.category,
-            )
-            for t in tasks_with_duration
-        ]
-
-        return self.router.optimize(tasks, time_window, self.optimizer_type)
+        return self.router.optimize(tasks, time_window, optimizer_type=None)
 
 
 _optimizer_service: OptimizerService | None = None

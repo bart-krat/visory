@@ -1,13 +1,14 @@
 from enum import Enum
-from app.state import PlannerState, CategorizedTask
+from app.state import PlannerState, CONSTRAINTS
 from app.categorize import get_categorize_service
-from app.constraints import get_constraints_service
+from app.constraints import get_constraints_service, ConstraintClarification
 from app.optimize import get_optimizer_service
 
 
 class WorkflowPhase(str, Enum):
     COLLECT_TASKS = "collect_tasks"
     CONSTRAINTS = "constraints"
+    CONSTRAINT_CLARIFICATION = "constraint_clarification"
     OPTIMIZE = "optimize"
     COMPLETE = "complete"
 
@@ -18,15 +19,20 @@ INITIAL_MESSAGE = "What tasks do you have on the agenda today?"
 class Orchestrator:
     """Runs the planning pipeline workflow."""
 
-    def __init__(self):
-        self.state = PlannerState()
+    def __init__(self, session_id: str = ""):
+        self.session_id = session_id
+        self.state = PlannerState(session_id=session_id)
         self.phase = WorkflowPhase.COLLECT_TASKS
         self.conversation_history: list[dict] = []
         self.categorize_service = get_categorize_service()
         self.constraints_service = get_constraints_service()
+        self.constraint_clarification = ConstraintClarification()
         self.optimizer_service = get_optimizer_service()
-        # Initialize optimizer with default rule
-        self.optimizer_service.create_optimizer()
+
+    def _persist_state(self):
+        """Save current state to disk."""
+        self.state.current_phase = self.phase.value
+        self.state.save()
 
     def get_state(self) -> PlannerState:
         """Get the current state."""
@@ -39,6 +45,7 @@ class Orchestrator:
     def start(self) -> str:
         """Start the workflow, return initial message."""
         self.phase = WorkflowPhase.COLLECT_TASKS
+        self._persist_state()
         return INITIAL_MESSAGE
 
     def process_message(self, user_message: str):
@@ -58,6 +65,9 @@ class Orchestrator:
         elif self.phase == WorkflowPhase.CONSTRAINTS:
             yield from self._handle_constraints(user_message)
 
+        elif self.phase == WorkflowPhase.CONSTRAINT_CLARIFICATION:
+            yield from self._handle_constraint_clarification(user_message)
+
         elif self.phase == WorkflowPhase.OPTIMIZE:
             yield from self._handle_optimize()
 
@@ -66,20 +76,17 @@ class Orchestrator:
         raw_tasks = self._parse_tasks_from_message(user_message)
         self.state.raw_tasks = raw_tasks
 
-        # Categorize tasks
-        result = self.categorize_service.categorize(raw_tasks)
-        self.state.categorized_tasks = [
-            CategorizedTask(task=item["task"], category=item["category"])
-            for item in result
-        ]
+        # Categorize tasks (returns Task objects with name, category, utility)
+        self.state.tasks = self.categorize_service.categorize(raw_tasks)
 
         # Move to constraints phase
         self.phase = WorkflowPhase.CONSTRAINTS
+        self._persist_state()
 
         # Stream the constraints question
         full_response = ""
         for chunk in self.constraints_service.generate_constraints_question(
-            self.state.categorized_tasks
+            self.state.tasks
         ):
             full_response += chunk
             yield chunk
@@ -89,7 +96,7 @@ class Orchestrator:
     def _handle_constraints(self, user_message: str):
         """Handle the constraints gathering phase."""
         result = self.constraints_service.parse_constraints_response(
-            self.state.categorized_tasks,
+            self.state.tasks,
             user_message,
             self.conversation_history,
         )
@@ -99,30 +106,69 @@ class Orchestrator:
             self.conversation_history.append({"role": "assistant", "content": response})
             yield response
         else:
-            tasks_with_duration, time_window = result
-            self.state.tasks_with_duration = tasks_with_duration
+            tasks, time_window = result
+            self.state.tasks = tasks  # Tasks now have duration filled
             self.state.time_window = time_window
 
-            # Move to optimize phase and run immediately
-            self.phase = WorkflowPhase.OPTIMIZE
-            yield from self._handle_optimize()
+            # Move to constraint clarification phase
+            self.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
+            self._persist_state()
+
+            # Stream the constraint clarification question
+            full_response = ""
+            for chunk in self.constraint_clarification.generate_question():
+                full_response += chunk
+                yield chunk
+
+            self.conversation_history.append({"role": "assistant", "content": full_response})
+
+    def _handle_constraint_clarification(self, user_message: str):
+        """Handle the constraint clarification phase."""
+        constraint = self.constraint_clarification.parse_response(user_message)
+
+        if constraint is None:
+            # Default to ALL_CATEGORIES if not recognized
+            constraint = CONSTRAINTS["ALL_CATEGORIES"]
+            yield f"I'll use the default: **{constraint.button_label}**\n\n"
+
+        self.state.constraint = constraint
+
+        # Configure optimizer based on constraint
+        if constraint.id == "ALL_CATEGORIES":
+            self.optimizer_service.router.require_all_categories = True
+        else:
+            self.optimizer_service.router.require_all_categories = False
+
+        # Move to optimize phase
+        self.phase = WorkflowPhase.OPTIMIZE
+        self._persist_state()
+
+        yield from self._handle_optimize()
 
     def _handle_optimize(self):
         """Handle the optimization phase."""
         yield "Creating your optimized schedule...\n\n"
 
+        # Get the optimizer type that will be selected
+        router = self.optimizer_service.router
+        selected_type = router._select_optimizer(self.state.tasks, self.state.time_window)
+        self.state.optimizer_type = selected_type.value
+
         # Run the optimizer
         daily_plan = self.optimizer_service.run_optimizer(
-            self.state.tasks_with_duration,
+            self.state.tasks,
             self.state.time_window,
         )
         self.state.daily_plan = daily_plan
+
+        # Move to complete phase and persist
+        self.phase = WorkflowPhase.COMPLETE
+        self._persist_state()
 
         # Format the schedule for display
         schedule_text = self._format_schedule(daily_plan)
         yield schedule_text
 
-        self.phase = WorkflowPhase.COMPLETE
         self.conversation_history.append({"role": "assistant", "content": schedule_text})
 
     def _format_schedule(self, daily_plan) -> str:
@@ -137,7 +183,9 @@ class Orchestrator:
                 f"{category_emoji} {task.start_time} - {task.end_time}: {task.task} ({task.duration_minutes} min)"
             )
 
-        lines.append("\nYour day is planned! Health tasks first for morning energy, then work during peak productivity, and leisure to wind down.")
+        lines.append(f"\nConstraint: {self.state.constraint.button_label}")
+        lines.append(f"Optimizer: {self.state.optimizer_type}")
+        lines.append("\nYour day is planned!")
 
         return "\n".join(lines)
 
@@ -167,7 +215,7 @@ _sessions: dict[str, Orchestrator] = {}
 def get_or_create_orchestrator(session_id: str) -> Orchestrator:
     """Get existing orchestrator or create new one for session."""
     if session_id not in _sessions:
-        _sessions[session_id] = Orchestrator()
+        _sessions[session_id] = Orchestrator(session_id=session_id)
     return _sessions[session_id]
 
 

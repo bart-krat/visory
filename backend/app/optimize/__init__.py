@@ -7,7 +7,7 @@ from app.optimize.knapsack_optimizer import KnapsackOptimizer
 from app.state import Task, ScheduledTask, DailyPlan
 
 __all__ = [
-    # Service (facade for backward compat)
+    # Service
     "OptimizerService",
     "get_optimizer_service",
     # Router

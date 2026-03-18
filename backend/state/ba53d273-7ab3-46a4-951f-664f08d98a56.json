@@ -1,0 +1,105 @@
+{
+  "session_id": "ba53d273-7ab3-46a4-951f-664f08d98a56",
+  "current_phase": "complete",
+  "updated_at": "2026-03-18T12:36:08.633849",
+  "raw_tasks": [
+    "go to the movies",
+    "go gym",
+    "finish cost report",
+    "play frisbee",
+    "go beach",
+    "meet boss",
+    "go for run"
+  ],
+  "tasks": [
+    {
+      "name": "go to the movies",
+      "category": "leisure",
+      "utility": 85.0,
+      "duration": 120
+    },
+    {
+      "name": "go gym",
+      "category": "health",
+      "utility": 70.0,
+      "duration": 90
+    },
+    {
+      "name": "finish cost report",
+      "category": "work",
+      "utility": 80.0,
+      "duration": 90
+    },
+    {
+      "name": "play frisbee",
+      "category": "leisure",
+      "utility": 85.0,
+      "duration": 45
+    },
+    {
+      "name": "go beach",
+      "category": "leisure",
+      "utility": 85.0,
+      "duration": 60
+    },
+    {
+      "name": "meet boss",
+      "category": "work",
+      "utility": 80.0,
+      "duration": 40
+    },
+    {
+      "name": "go for run",
+      "category": "health",
+      "utility": 70.0,
+      "duration": 45
+    }
+  ],
+  "time_window": {
+    "start_time": "09:00",
+    "end_time": "13:00"
+  },
+  "constraint": {
+    "id": "NONE",
+    "name": "No Constraints",
+    "description": "No specific constraints - optimize purely for utility",
+    "button_label": "No constraints"
+  },
+  "optimizer_type": "greedy",
+  "daily_plan": {
+    "schedule": [
+      {
+        "task": "go for run",
+        "category": "health",
+        "start_time": "09:00",
+        "end_time": "09:45",
+        "duration_minutes": 45
+      },
+      {
+        "task": "meet boss",
+        "category": "work",
+        "start_time": "09:50",
+        "end_time": "10:30",
+        "duration_minutes": 40
+      },
+      {
+        "task": "play frisbee",
+        "category": "leisure",
+        "start_time": "10:35",
+        "end_time": "11:20",
+        "duration_minutes": 45
+      },
+      {
+        "task": "go beach",
+        "category": "leisure",
+        "start_time": "11:25",
+        "end_time": "12:25",
+        "duration_minutes": 60
+      }
+    ],
+    "time_window": {
+      "start_time": "09:00",
+      "end_time": "13:00"
+    }
+  }
+}
