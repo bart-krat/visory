@@ -13,7 +13,7 @@ QUESTIONS = [
     "What is the most important thing in your life right now?",
     "What are your current goals?",
     "What are your biggest challenges?",
-    "Would you say you live to work or work to live?",
+    "Are you ambitious?",
     "How would you rate your health?",
     "How often do you exercise?",
     "What do you want to change in your life?",
@@ -35,11 +35,12 @@ Based on the conversation below, evaluate how much the user values each life dom
 2. The three weights MUST sum to exactly 300
 3. Each weight should be between 50 and 150 (reasonable bounds)
 4. Higher weight = user values this domain more
-5. Don't just count mentions - consider the depth, emotion, sentiment and emphasis in their answers
+5. For each question assess what domain they are emphasizing and how strongly
+6. Don't just count mentions - consider the depth, emotion, sentiment and emphasis in their answers
 
 ## Analysis Framework
 For each question, consider:
-- Q1 (Most important): Direct indicator of primary values
+- Q1 (Most important): Direct indicator of whether career, health, or personal life is top priority
 - Q2 (Goals): What they're striving for reveals priorities
 - Q3 (Challenges): Where they struggle shows what matters
 - Q4 (Live to work): Direct work-life balance indicator

@@ -267,7 +267,7 @@ export default function ChatView() {
           .join(', ')
         userMessage = `Constraints: ${constraintLabels}`
       } else {
-        userMessage = 'No constraints (maximize utility)'
+        userMessage = 'Optimize schedule'
       }
 
       setMessages(prev => [
@@ -568,7 +568,7 @@ export default function ChatView() {
       {phase === 'constraint_clarification' && !loading && (
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 12, fontSize: 14, color: '#333' }}>
-            How would you like to optimize your schedule?
+            Add additional constraints (optional):
           </div>
 
           {/* Custom text inputs */}
@@ -698,7 +698,7 @@ export default function ChatView() {
             </div>
           )}
 
-          {/* Run Optimization button */}
+          {/* Optimize button */}
           <div style={{ marginTop: 16 }}>
             <button
               onClick={submitConstraints2}
@@ -713,15 +713,16 @@ export default function ChatView() {
                 fontWeight: 600,
               }}
             >
-              Run Optimization
+              Optimize
             </button>
-            {(selectedConstraints.size > 0 || customConstraints.some(c => c.trim())) && (
-              <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>
-                {customConstraints.some(c => c.trim())
-                  ? `${customConstraints.filter(c => c.trim()).length} custom constraint${customConstraints.filter(c => c.trim()).length > 1 ? 's' : ''}`
-                  : `${selectedConstraints.size} task${selectedConstraints.size > 1 ? 's' : ''} selected`}
-              </span>
-            )}
+            <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>
+              {customConstraints.some(c => c.trim())
+                ? `${customConstraints.filter(c => c.trim()).length} custom constraint${customConstraints.filter(c => c.trim()).length > 1 ? 's' : ''}`
+                : selectedConstraints.size > 0
+                  ? `${selectedConstraints.size} task${selectedConstraints.size > 1 ? 's' : ''} must be included`
+                  : 'Fixed times from above will be applied'
+              }
+            </span>
           </div>
         </div>
       )}

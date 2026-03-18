@@ -281,10 +281,25 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
             matched_constraints = orchestrator.constraint_set.to_dict()
 
     else:
-        # No constraints specified
+        # No custom constraints selected - but still need to add fixed time slots from task table
+        from app.state import FixedTimeSlot
         orchestrator.constraint_set = ConstraintSet()
+
+        # Add fixed time slots from task.time_slot (set in the constraints table)
+        for task in orchestrator.state.tasks:
+            if task.time_slot is not None:
+                orchestrator.constraint_set.add(FixedTimeSlot(
+                    task_name=task.name,
+                    start_time=task.time_slot,
+                ))
+
         orchestrator.state.constraint_set = orchestrator.constraint_set
-        output_chunks.append("No constraints. Optimizing for maximum utility...\n\n")
+
+        if orchestrator.constraint_set.is_empty():
+            output_chunks.append("No constraints. Optimizing for maximum utility...\n\n")
+        else:
+            output_chunks.append(f"Applying: {orchestrator.constraint_set.describe()}\n\n")
+            matched_constraints = orchestrator.constraint_set.to_dict()
 
     # Run optimization
     for chunk in orchestrator.run_optimization():
