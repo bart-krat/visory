@@ -277,7 +277,7 @@ export default function ChatView() {
   }
 
   const getCategoryEmoji = (category: string) => {
-    return { health: '💪', work: '💼', leisure: '🎮' }[category] || '📌'
+    return { health: '💪', work: '💼', personal: '🎮' }[category] || '📌'
   }
 
   const getPhaseLabel = () => {
