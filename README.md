@@ -223,6 +223,22 @@ curl http://localhost:8000/health
 
   API routes call get_or_create_orchestrator(session_id) to get the right instance for each user.
 
+  **OPTIMIZERS**
+
+  The core logic for the daily planner is a set of optimizers.
+
+  There is a simple optimizer that follows a hard coded heuristic of a certain order of catgegories : Health, Work, Personal
+
+  Then there is the greedy optimizer which divides utility by time and the selects the combination of activities to maximise utility.
+
+  The knapsack algorithm which uses dynamic programming to find the optimal combination.
+
+  Enumeration Algorithm which subset each combination into various utility buckets. Then working from the max utility enforces the constraints until it finds a solution. By sorting in to utility buckets it greatly reduced the permuations required to find the solution.
+
+  LLM_Optimizer is the fall back optimizer when constraints from user are ambiguous. Will not guarantee maximised utility but will return a result.
+
+  
+
 
 **ARCHITECTURE**
 
