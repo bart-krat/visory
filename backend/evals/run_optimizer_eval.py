@@ -154,7 +154,7 @@ def run_single_optimizer(optimizer_type, tasks, time_window, constraints, test_i
         router = OptimizerRouter()
         start_time = time.time()
 
-        daily_plan = router.optimize(
+        daily_plan, _, _ = router.optimize(
             tasks=tasks,
             time_window=time_window,
             constraints=constraints,

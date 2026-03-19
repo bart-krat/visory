@@ -26,7 +26,13 @@ const CATEGORY_ICONS: Record<string, string> = {
 }
 
 function parseTime(timeStr: string): number {
+  if (!timeStr || !timeStr.includes(':')) {
+    return 0
+  }
   const [hours, minutes] = timeStr.split(':').map(Number)
+  if (isNaN(hours) || isNaN(minutes)) {
+    return 0
+  }
   return hours * 60 + minutes
 }
 

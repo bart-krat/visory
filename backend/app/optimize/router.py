@@ -62,7 +62,7 @@ class OptimizerRouter:
         time_window: TimeWindow,
         constraints: ConstraintSet | None = None,
         optimizer_type: OptimizerType | None = None,
-    ) -> DailyPlan:
+    ) -> tuple[DailyPlan, OptimizerType, bool]:
         """Run optimization with the given constraints.
 
         Args:
@@ -72,7 +72,7 @@ class OptimizerRouter:
             optimizer_type: Force a specific optimizer. If None, auto-select.
 
         Returns:
-            Optimized DailyPlan.
+            Tuple of (Optimized DailyPlan, OptimizerType used, fallback_used).
         """
         # Use provided constraints or fall back to stored
         cs = constraints if constraints is not None else self._constraints
@@ -81,19 +81,20 @@ class OptimizerRouter:
         if optimizer_type is None:
             optimizer_type = self._select_optimizer(tasks, time_window, cs)
 
+        original_optimizer_type = optimizer_type
         optimizer = self._optimizers[optimizer_type]
 
         # Route to appropriate optimizer with extracted constraints
         if optimizer_type == OptimizerType.KNAPSACK:
-            return optimizer.optimize(
+            daily_plan = optimizer.optimize(
                 tasks,
                 time_window,
                 mandatory_tasks=cs.mandatory_tasks or None,
                 mandatory_categories=cs.mandatory_categories or None,
             )
 
-        if optimizer_type == OptimizerType.ENUMERATION:
-            return optimizer.optimize(
+        elif optimizer_type == OptimizerType.ENUMERATION:
+            daily_plan = optimizer.optimize(
                 tasks,
                 time_window,
                 mandatory_tasks=cs.mandatory_tasks or None,
@@ -103,15 +104,35 @@ class OptimizerRouter:
                 time_range_constraints=cs.time_range_constraints or None,
             )
 
-        if optimizer_type == OptimizerType.LLM:
-            return optimizer.optimize(
+        elif optimizer_type == OptimizerType.LLM:
+            daily_plan = optimizer.optimize(
                 tasks,
                 time_window,
                 constraints=cs,
             )
 
-        # SIMPLE and GREEDY don't use constraints
-        return optimizer.optimize(tasks, time_window)
+        else:
+            # SIMPLE and GREEDY don't use constraints
+            daily_plan = optimizer.optimize(tasks, time_window)
+
+        # FALLBACK LOGIC: If enumeration failed and there are constraints, try LLM
+        fallback_used = False
+        if (optimizer_type == OptimizerType.ENUMERATION and
+            len(daily_plan.schedule) == 0 and
+            not cs.is_empty()):
+            # Enumeration couldn't satisfy constraints - try LLM as fallback
+            fallback_used = True
+            llm_optimizer = self._optimizers[OptimizerType.LLM]
+            daily_plan = llm_optimizer.optimize(
+                tasks,
+                time_window,
+                constraints=cs,
+            )
+            # Update optimizer type to indicate fallback was used
+            if len(daily_plan.schedule) > 0:
+                optimizer_type = OptimizerType.LLM
+
+        return daily_plan, optimizer_type, fallback_used
 
     def _select_optimizer(
         self,

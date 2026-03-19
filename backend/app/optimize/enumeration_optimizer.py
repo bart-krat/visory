@@ -135,6 +135,41 @@ class EnumerationOptimizer(BaseOptimizer):
         # Sort by utility DESCENDING - highest utility first
         valid_subsets.sort(key=lambda x: -x[1])
 
+        # Compute implicit time constraints from ordering constraints with fixed tasks
+        # If task A must come after fixed task B, then A must start after B ends
+        # If task A must come before fixed task B, then A must start before B starts
+        implicit_time_constraints = dict(time_range_constraints) if time_range_constraints else {}
+        task_durations = {t.name: t.duration for t in tasks}
+
+        for before_task, after_task in ordering_constraints:
+            # If before_task is fixed, after_task must start after before_task ends
+            if before_task in fixed_slots:
+                fixed_end = fixed_slots[before_task] + task_durations.get(before_task, 0) + self.buffer_minutes
+                if after_task in implicit_time_constraints:
+                    # Merge: take the later "after" time
+                    existing = implicit_time_constraints[after_task]
+                    implicit_time_constraints[after_task] = (
+                        max(existing[0] or 0, fixed_end),
+                        existing[1],
+                    )
+                else:
+                    implicit_time_constraints[after_task] = (fixed_end, None)
+
+            # If after_task is fixed, before_task must start before after_task starts
+            if after_task in fixed_slots:
+                fixed_start = fixed_slots[after_task] - self.buffer_minutes
+                if before_task in implicit_time_constraints:
+                    # Merge: take the earlier "before" time
+                    existing = implicit_time_constraints[before_task]
+                    before_time = existing[1]
+                    if before_time is None:
+                        before_time = fixed_start
+                    else:
+                        before_time = min(before_time, fixed_start)
+                    implicit_time_constraints[before_task] = (existing[0], before_time)
+                else:
+                    implicit_time_constraints[before_task] = (None, fixed_start)
+
         # Try subsets in order of decreasing utility
         # FIRST valid solution is GUARANTEED optimal
         best_flexible_schedule = None
@@ -144,8 +179,8 @@ class EnumerationOptimizer(BaseOptimizer):
             for perm in permutations(subset_list):
                 perm_list = list(perm)
 
-                # Try to schedule this permutation with time range constraints
-                schedule = self._try_schedule(perm_list, gaps, time_range_constraints)
+                # Try to schedule this permutation with implicit time constraints
+                schedule = self._try_schedule(perm_list, gaps, implicit_time_constraints)
                 if schedule is None:
                     continue
 

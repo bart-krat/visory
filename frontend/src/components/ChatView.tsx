@@ -275,6 +275,7 @@ export default function ChatView() {
           assistantContent += chunk
 
           setMessages(prev => {
+            if (prev.length === 0) return prev
             const updated = [...prev]
             updated[updated.length - 1] = { role: 'assistant', content: assistantContent }
             return updated
@@ -288,10 +289,6 @@ export default function ChatView() {
   }
 
   const toggleConstraint = (optionId: string) => {
-    // Clear custom constraints when selecting buttons
-    if (customConstraints.some(c => c.trim())) {
-      setCustomConstraints([''])
-    }
     setSelectedConstraints(prev => {
       const newSet = new Set(prev)
       if (newSet.has(optionId)) {
@@ -630,10 +627,6 @@ export default function ChatView() {
                       const newConstraints = [...customConstraints]
                       newConstraints[index] = e.target.value
                       setCustomConstraints(newConstraints)
-                      // Clear button selections when typing custom text
-                      if (e.target.value.trim() && selectedConstraints.size > 0) {
-                        setSelectedConstraints(new Set())
-                      }
                     }}
                     placeholder={index === 0
                       ? 'e.g., "gym before lunch" or "must include meeting"'

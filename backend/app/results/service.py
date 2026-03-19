@@ -26,6 +26,7 @@ class ResultsService:
         all_tasks: list[Task],
         constraint_set: ConstraintSet,
         optimizer_type: str,
+        fallback_used: bool = False,
     ) -> str:
         """Validate constraints and explain results.
 
@@ -39,6 +40,7 @@ class ResultsService:
             all_tasks: All tasks that were available to schedule.
             constraint_set: The constraints that were applied.
             optimizer_type: The type of optimizer used (e.g., "greedy", "enumeration").
+            fallback_used: Whether the LLM fallback was triggered due to constraint issues.
 
         Returns:
             A validation message explaining the outcome.
@@ -82,16 +84,30 @@ class ResultsService:
         scheduled_count = len(daily_plan.schedule)
         total_count = len(all_tasks)
 
+        # Check for excluded tasks
+        excluded_tasks = self._get_excluded_tasks(daily_plan, all_tasks)
+        excluded_message = ""
+        if excluded_tasks:
+            excluded_message = self._explain_excluded_tasks(excluded_tasks)
+
         # Filter out undefined constraints for checking if we have real constraints
         real_constraints = [c for c in constraint_set.constraints if not isinstance(c, UndefinedConstraint)]
 
-        if real_constraints:
+        if fallback_used:
+            # Fallback was triggered - constraints may not be fully satisfied
+            return (
+                "⚠️ Your constraints could not be exactly satisfied by the optimizer. "
+                "The AI has created a best-effort schedule, but some constraints may be violated."
+            ) + excluded_message + undefined_message
+        elif real_constraints:
+            if excluded_tasks:
+                return f"✅ All constraints satisfied." + excluded_message + undefined_message
             return f"✅ All constraints satisfied. Your optimized schedule is ready!" + undefined_message
         else:
             if scheduled_count == total_count:
                 return "Here is your optimized schedule. All tasks have been included!" + undefined_message
             else:
-                return f"Here is your optimized schedule. {scheduled_count} out of {total_count} tasks have been scheduled." + undefined_message
+                return f"Here is your optimized schedule. {scheduled_count} out of {total_count} tasks have been scheduled." + excluded_message + undefined_message
 
     def _detect_contradictions(
         self, constraint_set: ConstraintSet, all_tasks: list[Task]
@@ -285,6 +301,42 @@ class ResultsService:
         explanation += "- Try rephrasing your constraints, OR\n"
         explanation += "- Extend your available time window, OR\n"
         explanation += "- Reduce the number of constraints"
+
+        return explanation
+
+    def _get_excluded_tasks(self, daily_plan: DailyPlan, all_tasks: list[Task]) -> list[Task]:
+        """Find tasks that were not included in the schedule.
+
+        Args:
+            daily_plan: The optimized schedule.
+            all_tasks: All tasks that were available to schedule.
+
+        Returns:
+            List of Task objects that were not scheduled.
+        """
+        scheduled_names = {st.task for st in daily_plan.schedule}
+        return [task for task in all_tasks if task.name not in scheduled_names]
+
+    def _explain_excluded_tasks(self, excluded_tasks: list[Task]) -> str:
+        """Generate explanation for tasks that were not scheduled.
+
+        Args:
+            excluded_tasks: List of tasks that were not included in the schedule.
+
+        Returns:
+            A formatted message explaining which tasks were excluded.
+        """
+        if not excluded_tasks:
+            return ""
+
+        explanation = "\n\n📋 **Tasks Not Scheduled:**\n"
+        total_excluded_duration = 0
+
+        for task in excluded_tasks:
+            explanation += f"- {task.name} ({task.category}, {task.duration} min)\n"
+            total_excluded_duration += task.duration
+
+        explanation += f"\n*{len(excluded_tasks)} task(s) totaling {total_excluded_duration} minutes could not fit in your time window.*"
 
         return explanation
 

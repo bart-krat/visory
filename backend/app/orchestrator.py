@@ -173,6 +173,8 @@ class Orchestrator:
         Args:
             constraint_ids: List of button IDs like ["TASK_Gym", "TASK_Run"]
         """
+        if self.constraint_clarification is None:
+            self.constraint_clarification = ConstraintClarification(tasks=self.state.tasks)
         self.constraint_set = self.constraint_clarification.selection_to_constraints(constraint_ids)
         self._add_fixed_time_slots_to_constraints()
         self.state.constraint_set = self.constraint_set
@@ -234,24 +236,27 @@ class Orchestrator:
         yield "Creating your optimized schedule...\n\n"
 
         # Run optimizer with constraint set
+        # Router handles optimizer selection and fallback internally
         router = self.optimizer_service.router
-        selected_type = router._select_optimizer(
-            self.state.tasks,
-            self.state.time_window,
-            self.constraint_set,
-        )
-        self.state.optimizer_type = selected_type.value
-
-        daily_plan = router.optimize(
+        daily_plan, optimizer_type, fallback_used = router.optimize(
             self.state.tasks,
             self.state.time_window,
             constraints=self.constraint_set,
         )
+        self.state.optimizer_type = optimizer_type.value
         self.state.daily_plan = daily_plan
 
-        # If LLM optimizer was used, show its reasoning
+        # Show warning if fallback to LLM was used due to constraint issues
         from app.optimize.router import OptimizerType
-        if selected_type == OptimizerType.LLM:
+        if fallback_used:
+            yield (
+                "⚠️ **Constraint Warning:** The exact optimizer could not satisfy "
+                "all constraints. Using AI-assisted scheduling as fallback. "
+                "The schedule below may not fully satisfy all constraints.\n\n"
+            )
+
+        # If LLM optimizer was used (either selected or fallback), show its reasoning
+        if optimizer_type == OptimizerType.LLM:
             llm_optimizer = router._optimizers.get(OptimizerType.LLM)
             if llm_optimizer and hasattr(llm_optimizer, 'last_reasoning') and llm_optimizer.last_reasoning:
                 yield f"💡 **AI Reasoning:** {llm_optimizer.last_reasoning}\n\n"
@@ -266,6 +271,7 @@ class Orchestrator:
                 all_tasks=self.state.tasks,
                 constraint_set=self.constraint_set,
                 optimizer_type=self.state.optimizer_type,
+                fallback_used=fallback_used,
             )
             yield f"{ai_summary}\n\n"
         except Exception as e:
