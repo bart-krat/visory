@@ -80,6 +80,10 @@ User: "beach after run"
 Tasks available: ["Run", "Beach", "Work"]
 Output: [{{"type": "ordered_after", "task_name": "Beach", "after_task": "Run"}}, {{"type": "must_include_task", "task_name": "Beach"}}, {{"type": "must_include_task", "task_name": "Run"}}]
 
+User: "run before beach"
+Tasks available: ["Run", "Beach", "Work"]
+Output: [{{"type": "ordered_after", "task_name": "Beach", "after_task": "Run"}}, {{"type": "must_include_task", "task_name": "Beach"}}, {{"type": "must_include_task", "task_name": "Run"}}]
+
 User: "meeting at 2pm"
 Tasks available: ["Meeting", "Gym", "Lunch"]
 Output: [{{"type": "fixed_time_slot", "task_name": "Meeting", "start_time": 840}}]
@@ -109,6 +113,9 @@ Parse the user's constraint request and output a JSON array of constraints.
 - When using OrderedAfter or TimeRangeConstraint, also include MustIncludeTask for the tasks to ensure they're selected
 - For time-based phrases (morning, afternoon, evening, before/after X), use TimeRangeConstraint
 - ONLY use UndefinedConstraint for subjective/vague constraints that truly cannot be encoded
+- CRITICAL: "X before Y" means Y comes after X (Y is ordered_after X)
+- CRITICAL: Only add FixedTimeSlot constraints if the user explicitly mentions a specific time (e.g., "at 2pm", "at 9am")
+- DO NOT add time constraints unless explicitly stated by the user
 - Output ONLY the JSON array, no explanation
 
 ## User Request

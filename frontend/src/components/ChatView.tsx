@@ -14,7 +14,6 @@ type ScheduledTask = {
   duration_minutes: number
 }
 type ConstraintOption = { id: string; label: string; description: string }
-type ConstraintOptionsResponse = { options: ConstraintOption[]; supports_custom_text: boolean }
 type TaskForConstraints = {
   name: string
   category: string

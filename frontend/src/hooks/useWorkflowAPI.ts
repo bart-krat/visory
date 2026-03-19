@@ -1,7 +1,5 @@
 import { useState } from 'react'
 
-type Message = { role: 'user' | 'assistant'; content: string }
-
 export function useWorkflowAPI(sessionId: string | null) {
   const [loading, setLoading] = useState(false)
 

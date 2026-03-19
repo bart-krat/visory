@@ -179,7 +179,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
             letterSpacing: '-0.5px',
             textShadow: '0 2px 10px rgba(0, 0, 0, 0.2)',
           }}>
-            Visory
+            AICalendar
           </h1>
           <p style={{
             margin: '4px 0 0 0',
