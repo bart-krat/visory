@@ -1,9 +1,25 @@
 import json
+from pydantic import BaseModel, ValidationError, field_validator
 from app.chat import get_chat_service
 from app.state import Task, DEFAULT_UTILITY_WEIGHTS
 from app.utils import clean_json_response
 
 CATEGORIES = ["work", "health", "personal"]
+
+
+class CategorizedTask(BaseModel):
+    """A single categorized task from the LLM."""
+    task: str
+    category: str
+
+    @field_validator('category')
+    @classmethod
+    def validate_category(cls, v):
+        """Ensure category is one of the valid options."""
+        v = v.lower()
+        if v not in CATEGORIES:
+            raise ValueError(f'Category must be one of: {", ".join(CATEGORIES)}. Got: {v}')
+        return v
 
 CATEGORIZE_SYSTEM_PROMPT = """You are a task categorizer. Given a list of tasks, classify each one into exactly one category: work, health, or personal.
 
@@ -58,19 +74,22 @@ class CategorizeService:
             content = clean_json_response(response)
             result = json.loads(content)
 
-            # Build Task objects
+            # Validate with Pydantic schema
+            validated = [CategorizedTask(**item) for item in result]
+
+            # Build Task objects from validated data
             tasks = []
-            for item in result:
-                name = item.get("task", "")
-                category = item.get("category", "").lower()
-                if category not in CATEGORIES:
-                    category = "personal"  # Default fallback
+            for item in validated:
+                category = item.category.lower()
                 utility = weights.get(category, 100.0)
-                tasks.append(Task(name=name, category=category, utility=utility))
+                tasks.append(Task(name=item.task, category=category, utility=utility))
 
             return tasks
 
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValidationError) as e:
+            # Log validation failures for debugging
+            if isinstance(e, ValidationError):
+                print(f"Categorization validation failed: {e}")
             # Fallback: return tasks as uncategorized personal
             return [
                 Task(name=t, category="personal", utility=weights.get("personal", 100.0))

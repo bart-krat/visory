@@ -4,10 +4,26 @@ This optimizer uses an LLM to generate schedules when constraints are too
 ambiguous or complex for rule-based optimizers to handle effectively.
 """
 import json
+from pydantic import BaseModel, ValidationError
 from app.state import Task, TimeWindow, DailyPlan, ScheduledTask, ConstraintSet
 from app.optimize.base import BaseOptimizer
 from app.chat import get_chat_service
 from app.utils import clean_json_response
+
+
+class ScheduledTaskItem(BaseModel):
+    """A single scheduled task in the optimizer response."""
+    task: str
+    category: str
+    start_time: str
+    end_time: str
+    duration_minutes: int
+
+
+class OptimizerScheduleResponse(BaseModel):
+    """Response from LLM optimizer containing schedule and reasoning."""
+    schedule: list[ScheduledTaskItem]
+    reasoning: str = ""
 
 
 LLM_OPTIMIZER_SYSTEM_PROMPT = """You are an expert daily schedule optimizer with natural language understanding. Given a list of tasks with durations and utilities, time constraints, and user preferences (including ambiguous or subjective ones), create an optimal schedule.
@@ -231,25 +247,27 @@ class LLMOptimizer(BaseOptimizer):
         cleaned = clean_json_response(response)
         data = json.loads(cleaned)
 
-        # Extract schedule
-        schedule_data = data.get("schedule", [])
-        schedule = []
+        # Validate with Pydantic schema
+        try:
+            validated = OptimizerScheduleResponse(**data)
+        except ValidationError as e:
+            print(f"Optimizer schedule validation failed: {e}")
+            raise ValueError(f"Invalid schedule format from LLM: {e}")
 
-        for item in schedule_data:
+        # Extract schedule from validated data
+        schedule = []
+        for item in validated.schedule:
             task = ScheduledTask(
-                task=item["task"],
-                category=item["category"],
-                start_time=item["start_time"],
-                end_time=item["end_time"],
-                duration_minutes=item["duration_minutes"],
+                task=item.task,
+                category=item.category,
+                start_time=item.start_time,
+                end_time=item.end_time,
+                duration_minutes=item.duration_minutes,
             )
             schedule.append(task)
 
         # Store reasoning for display to user
-        if "reasoning" in data:
-            self.last_reasoning = data['reasoning']
-        else:
-            self.last_reasoning = None
+        self.last_reasoning = validated.reasoning
 
         return DailyPlan(schedule=schedule, time_window=time_window)
 

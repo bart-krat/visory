@@ -5,6 +5,7 @@ ConstraintSet objects that optimizers can understand.
 """
 import json
 import re
+from pydantic import BaseModel, ValidationError
 
 from app.state import (
     Task,
@@ -17,6 +18,18 @@ from app.state import (
     UndefinedConstraint,
 )
 from app.chat import get_chat_service
+
+
+class ConstraintMatch(BaseModel):
+    """A single parsed constraint from the LLM."""
+    type: str
+    task_name: str | None = None
+    category: str | None = None
+    start_time: int | None = None
+    after_task: str | None = None
+    after_time: int | None = None
+    before_time: int | None = None
+    description: str | None = None
 
 
 CONSTRAINT_MATCHING_PROMPT = '''You are a constraint parser for a daily planning app.
@@ -187,7 +200,16 @@ class ConstraintMatcher:
 
         if start >= 0 and end > start:
             json_str = response[start:end]
-            return json.loads(json_str)
+            parsed_data = json.loads(json_str)
+
+            # Validate with Pydantic schema
+            try:
+                validated = [ConstraintMatch(**item) for item in parsed_data]
+                return [constraint.model_dump() for constraint in validated]
+            except ValidationError as e:
+                print(f"Constraint match validation failed: {e}")
+                # Return original data as fallback, _dict_to_constraint will handle it
+                return parsed_data
 
         return []
 

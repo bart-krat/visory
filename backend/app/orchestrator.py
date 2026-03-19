@@ -7,17 +7,23 @@ from app.state import (
     FixedTimeSlot,
 )
 from app.categorize import get_categorize_service
-from app.constraints import get_constraints_service, ConstraintClarification, get_constraint_matcher
+from app.constraints import ConstraintClarification, get_constraint_matcher
 from app.optimize import get_optimizer_service
 from app.results import get_results_service
 
 
 class WorkflowPhase(str, Enum):
+    """Workflow phases for the planning pipeline.
+
+    Flow: WELCOME → COLLECT_TASKS → CONSTRAINTS (UI editing) →
+          CONSTRAINT_CLARIFICATION → OPTIMIZE → COMPLETE
+    (QUESTIONNAIRE is optional before COLLECT_TASKS)
+    """
     WELCOME = "welcome"
     QUESTIONNAIRE = "questionnaire"
     EVALUATION = "evaluation"
     COLLECT_TASKS = "collect_tasks"
-    CONSTRAINTS = "constraints"
+    CONSTRAINTS = "constraints"  # User is editing durations/time window in UI
     CONSTRAINT_CLARIFICATION = "constraint_clarification"
     OPTIMIZE = "optimize"
     COMPLETE = "complete"
@@ -38,6 +44,13 @@ PLANNING_INTRO = "What tasks do you have on the agenda today?"
 
 TASKS_MESSAGE = "Great! Now, what tasks do you have on the agenda today?"
 
+# Category emoji mapping for schedule formatting
+CATEGORY_EMOJIS = {
+    "health": "💪",
+    "work": "💼",
+    "personal": "🎮",
+}
+
 
 class Orchestrator:
     """Runs the planning pipeline workflow."""
@@ -48,7 +61,6 @@ class Orchestrator:
         self.phase = WorkflowPhase.WELCOME
         self.conversation_history: list[dict] = []
         self.categorize_service = get_categorize_service()
-        self.constraints_service = get_constraints_service()
         self.constraint_clarification: ConstraintClarification | None = None
         self.optimizer_service = get_optimizer_service()
         self.results_service = get_results_service()
@@ -68,6 +80,19 @@ class Orchestrator:
     def get_phase(self) -> WorkflowPhase:
         """Get the current workflow phase."""
         return self.phase
+
+    def _add_fixed_time_slots_to_constraints(self) -> None:
+        """Add fixed time slots from tasks to constraint set.
+
+        This ensures that any time slots specified in the task table
+        are enforced as hard constraints during optimization.
+        """
+        for task in self.state.tasks:
+            if task.time_slot is not None:
+                self.constraint_set.add(FixedTimeSlot(
+                    task_name=task.name,
+                    start_time=task.time_slot,
+                ))
 
     def start(self) -> str:
         """Start the workflow, return welcome message."""
@@ -93,15 +118,17 @@ class Orchestrator:
 
         if self.phase == WorkflowPhase.COLLECT_TASKS:
             yield from self._handle_collect_tasks(user_message)
-        elif self.phase == WorkflowPhase.CONSTRAINTS:
-            yield from self._handle_constraints(user_message)
         elif self.phase == WorkflowPhase.CONSTRAINT_CLARIFICATION:
             yield from self._handle_constraint_clarification(user_message)
         elif self.phase == WorkflowPhase.OPTIMIZE:
             yield from self._handle_optimize()
 
     def _handle_collect_tasks(self, user_message: str):
-        """Handle the task collection phase."""
+        """Handle the task collection phase.
+
+        Categorizes tasks and transitions to CONSTRAINTS phase where
+        user edits durations/time windows via the UI.
+        """
         raw_tasks = self._parse_tasks_from_message(user_message)
         self.state.raw_tasks = raw_tasks
 
@@ -110,6 +137,7 @@ class Orchestrator:
             utility_weights=self.state.utility_weights,
         )
 
+        # Transition to CONSTRAINTS phase (UI shows duration/time window form)
         self.phase = WorkflowPhase.CONSTRAINTS
         self._persist_state()
 
@@ -117,34 +145,6 @@ class Orchestrator:
         yield response
         self.conversation_history.append({"role": "assistant", "content": response})
 
-    def _handle_constraints(self, user_message: str):
-        """Handle the constraints gathering phase."""
-        result = self.constraints_service.parse_constraints_response(
-            self.state.tasks,
-            user_message,
-            self.conversation_history,
-        )
-
-        if result is None:
-            response = "I didn't catch all the details. Could you tell me the duration for each task and your available time window (e.g., 9am to 5pm)?"
-            self.conversation_history.append({"role": "assistant", "content": response})
-            yield response
-        else:
-            tasks, time_window = result
-            self.state.tasks = tasks
-            self.state.time_window = time_window
-
-            self.constraint_clarification = ConstraintClarification(tasks=self.state.tasks)
-
-            self.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
-            self._persist_state()
-
-            full_response = ""
-            for chunk in self.constraint_clarification.generate_question():
-                full_response += chunk
-                yield chunk
-
-            self.conversation_history.append({"role": "assistant", "content": full_response})
 
     def _handle_constraint_clarification(self, user_message: str):
         """Handle the constraint clarification phase."""
@@ -157,15 +157,8 @@ class Orchestrator:
         else:
             yield f"Understood: {self.constraint_set.describe()}\n\n"
 
-        # Add fixed time slots from task.time_slot
-        for task in self.state.tasks:
-            if task.time_slot is not None:
-                self.constraint_set.add(FixedTimeSlot(
-                    task_name=task.name,
-                    start_time=task.time_slot,
-                ))
-
-        # Save constraints to state
+        # Add fixed time slots and save to state
+        self._add_fixed_time_slots_to_constraints()
         self.state.constraint_set = self.constraint_set
 
         # Move to optimize phase
@@ -181,16 +174,7 @@ class Orchestrator:
             constraint_ids: List of button IDs like ["TASK_Gym", "TASK_Run"]
         """
         self.constraint_set = self.constraint_clarification.selection_to_constraints(constraint_ids)
-
-        # Add fixed time slots from task.time_slot
-        for task in self.state.tasks:
-            if task.time_slot is not None:
-                self.constraint_set.add(FixedTimeSlot(
-                    task_name=task.name,
-                    start_time=task.time_slot,
-                ))
-
-        # Save to state
+        self._add_fixed_time_slots_to_constraints()
         self.state.constraint_set = self.constraint_set
 
     def apply_constraints_from_text(self, text: str) -> ConstraintSet:
@@ -204,18 +188,8 @@ class Orchestrator:
         """
         matcher = get_constraint_matcher(self.state.tasks)
         self.constraint_set = matcher.match(text)
-
-        # Add fixed time slots from task.time_slot
-        for task in self.state.tasks:
-            if task.time_slot is not None:
-                self.constraint_set.add(FixedTimeSlot(
-                    task_name=task.name,
-                    start_time=task.time_slot,
-                ))
-
-        # Save to state
+        self._add_fixed_time_slots_to_constraints()
         self.state.constraint_set = self.constraint_set
-
         return self.constraint_set
 
     def run_optimization(self):
@@ -234,7 +208,10 @@ class Orchestrator:
         return PLANNING_INTRO
 
     def return_to_constraints(self) -> str:
-        """Return to constraints phase, preserving existing tasks."""
+        """Return to constraints phase, preserving existing tasks.
+
+        User can edit durations and time windows via the UI.
+        """
         if not self.state.tasks:
             return "Please add tasks first."
 
@@ -309,7 +286,7 @@ class Orchestrator:
         ]
 
         for task in daily_plan.schedule:
-            category_emoji = {"health": "💪", "work": "💼", "personal": "🎮"}.get(task.category, "📌")
+            category_emoji = CATEGORY_EMOJIS.get(task.category, "📌")
             lines.append(
                 f"{category_emoji} {task.start_time} - {task.end_time}: {task.task} ({task.duration_minutes} min)"
             )

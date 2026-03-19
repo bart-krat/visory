@@ -5,8 +5,46 @@ then uses an LLM to derive utility weights for work, health, and personal.
 """
 import json
 from dataclasses import dataclass, field
+from pydantic import BaseModel, ValidationError, field_validator, model_validator
 from app.chat import get_chat_service
 from app.utils import clean_json_response
+
+
+class UtilityWeightsResponse(BaseModel):
+    """Response from utility weights evaluation LLM.
+
+    Validates complex business logic: weights must sum to 300 and be within bounds.
+
+    Expected format:
+    {
+        "work": 120.0,
+        "health": 80.0,
+        "personal": 100.0,
+        "reasoning": "User prioritizes career growth..."
+    }
+    """
+    work: float
+    health: float
+    personal: float
+    reasoning: str = ""
+
+    @field_validator('work', 'health', 'personal')
+    @classmethod
+    def validate_weight_range(cls, v):
+        """Ensure weights are within reasonable bounds."""
+        if v < 0:
+            raise ValueError(f'Weight cannot be negative. Got: {v}')
+        if v > 300:
+            raise ValueError(f'Weight cannot exceed 300. Got: {v}')
+        return v
+
+    @model_validator(mode='after')
+    def validate_sum(self):
+        """Ensure weights sum to approximately 300 (allow small floating point errors)."""
+        total = self.work + self.health + self.personal
+        if abs(total - 300) > 5:  # Allow 5 point tolerance
+            raise ValueError(f'Weights should sum to 300. Got: {total}')
+        return self
 
 
 QUESTIONS = [
@@ -194,10 +232,13 @@ class UtilityQuestionnaire:
             clean = clean_json_response(response)
             data = json.loads(clean)
 
-            work = float(data.get("work", 100))
-            health = float(data.get("health", 100))
-            personal = float(data.get("personal", 100))
-            reasoning = data.get("reasoning", "")
+            # Validate with Pydantic schema (with lenient sum validation)
+            validated = UtilityWeightsResponse(**data)
+
+            work = validated.work
+            health = validated.health
+            personal = validated.personal
+            reasoning = validated.reasoning
 
             # Validate sum
             total = work + health + personal
@@ -228,8 +269,12 @@ class UtilityQuestionnaire:
                 reasoning=reasoning,
             )
 
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            print(f"Error parsing LLM response: {e}")
+        except (json.JSONDecodeError, KeyError, TypeError, ValidationError) as e:
+            # Log schema violation
+            if isinstance(e, ValidationError):
+                print(f"Utility weights schema validation failed: {e}")
+            else:
+                print(f"Error parsing LLM response: {e}")
             print(f"Response was: {response}")
             return UtilityWeights.default()
 
