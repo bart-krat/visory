@@ -7,6 +7,7 @@ from app.optimize.simple_optimizer import SimpleOptimizer
 from app.optimize.greedy_optimizer import GreedyOptimizer
 from app.optimize.knapsack_optimizer import KnapsackOptimizer
 from app.optimize.enumeration_optimizer import EnumerationOptimizer
+from app.optimize.llm_optimizer import LLMOptimizer
 from app.utils import time_window_minutes
 
 
@@ -15,6 +16,7 @@ class OptimizerType(str, Enum):
     GREEDY = "greedy"          # Maximizes utility/time ratio
     KNAPSACK = "knapsack"      # DP with mandatory tasks/categories
     ENUMERATION = "enumeration"  # Brute force optimal (tasks < 10, complex constraints)
+    LLM = "llm"                # LLM-based fallback for ambiguous/complex constraints
 
 
 class OptimizerRouter:
@@ -33,6 +35,7 @@ class OptimizerRouter:
             OptimizerType.GREEDY: GreedyOptimizer(),
             OptimizerType.KNAPSACK: KnapsackOptimizer(),
             OptimizerType.ENUMERATION: EnumerationOptimizer(),
+            OptimizerType.LLM: LLMOptimizer(),
         }
         self._constraints = ConstraintSet()
 
@@ -100,6 +103,13 @@ class OptimizerRouter:
                 time_range_constraints=cs.time_range_constraints or None,
             )
 
+        if optimizer_type == OptimizerType.LLM:
+            return optimizer.optimize(
+                tasks,
+                time_window,
+                constraints=cs,
+            )
+
         # SIMPLE and GREEDY don't use constraints
         return optimizer.optimize(tasks, time_window)
 
@@ -112,20 +122,29 @@ class OptimizerRouter:
         """Auto-select the appropriate optimizer.
 
         Selection logic:
-        1. Complex constraints (fixed_slots, ordering) → ENUMERATION (if tasks < 10)
-        2. Tasks fit in window → SIMPLE
-        3. Tasks overflow + has constraints → KNAPSACK
-        4. Tasks overflow + no constraints → GREEDY
+        1. Has UndefinedConstraints (ambiguous) → LLM
+        2. Complex constraints (fixed_slots, ordering) → ENUMERATION (if tasks < 10)
+        3. Too many tasks + complex constraints → LLM (fallback)
+        4. Tasks fit in window → SIMPLE
+        5. Tasks overflow + has constraints → KNAPSACK
+        6. Tasks overflow + no constraints → GREEDY
         """
         num_tasks = len(tasks)
+
+        # Check for undefined/ambiguous constraints - use LLM
+        has_undefined = any(
+            hasattr(c, 'description') for c in constraints.constraints
+        )
+        if has_undefined:
+            return OptimizerType.LLM
 
         # Complex constraints require enumeration
         if constraints.has_complex_constraints():
             if num_tasks < 10:
                 return OptimizerType.ENUMERATION
             else:
-                # Too many tasks - fall back to knapsack (ignores complex constraints)
-                return OptimizerType.KNAPSACK
+                # Too many tasks for enumeration - use LLM as fallback
+                return OptimizerType.LLM
 
         # Check if tasks fit in window
         total_duration = sum(t.duration for t in tasks)

@@ -252,13 +252,6 @@ class Orchestrator:
         self._persist_state()
         return "Let's revise your optimization constraints."
 
-    def reoptimize(self):
-        """Re-run optimization with current state (no changes to constraints)."""
-        if not self.state.tasks or not self.state.time_window:
-            raise ValueError("Cannot optimize without tasks and time window")
-
-        yield from self._handle_optimize()
-
     def _handle_optimize(self):
         """Handle the optimization phase."""
         yield "Creating your optimized schedule...\n\n"
@@ -278,6 +271,13 @@ class Orchestrator:
             constraints=self.constraint_set,
         )
         self.state.daily_plan = daily_plan
+
+        # If LLM optimizer was used, show its reasoning
+        from app.optimize.router import OptimizerType
+        if selected_type == OptimizerType.LLM:
+            llm_optimizer = router._optimizers.get(OptimizerType.LLM)
+            if llm_optimizer and hasattr(llm_optimizer, 'last_reasoning') and llm_optimizer.last_reasoning:
+                yield f"💡 **AI Reasoning:** {llm_optimizer.last_reasoning}\n\n"
 
         self.phase = WorkflowPhase.COMPLETE
         self._persist_state()

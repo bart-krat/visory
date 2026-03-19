@@ -269,8 +269,15 @@ def submit_constraint_selection(request: ConstraintSelectionRequest):
             output_chunks.append("\n")
             matched_constraints = constraint_set.to_dict()
         else:
-            output_chunks.append(f"Could not parse constraints from: \"{request.custom_constraint}\"\n")
-            output_chunks.append("Optimizing for maximum utility...\n\n")
+            # Parsing failed - add as UndefinedConstraint so LLM optimizer handles it
+            from app.state import UndefinedConstraint
+            constraint_set.add(UndefinedConstraint(description=request.custom_constraint))
+            orchestrator.constraint_set = constraint_set
+            orchestrator.state.constraint_set = constraint_set
+
+            output_chunks.append(f"Interpreting constraint: \"{request.custom_constraint}\"\n")
+            output_chunks.append("Using AI reasoning to create your schedule...\n\n")
+            matched_constraints = constraint_set.to_dict()
 
     elif request.constraint_ids:
         # Handle button-selected task constraints
@@ -388,7 +395,6 @@ def navigate_to_phase(session_id: str, target_phase: str):
     - "collect_tasks": Edit tasks
     - "constraints": Edit durations and time slots
     - "constraint_clarification": Edit custom constraints
-    - "reoptimize": Re-run optimization with current settings
     """
     orchestrator = get_orchestrator(session_id)
     if not orchestrator:
@@ -414,16 +420,6 @@ def navigate_to_phase(session_id: str, target_phase: str):
             "success": True,
             "phase": orchestrator.phase.value,
             "message": message,
-        }
-    elif target_phase == "reoptimize":
-        # Re-run optimization
-        output_chunks = []
-        for chunk in orchestrator.reoptimize():
-            output_chunks.append(chunk)
-        return {
-            "success": True,
-            "phase": orchestrator.phase.value,
-            "message": "".join(output_chunks),
         }
     else:
         raise HTTPException(status_code=400, detail=f"Invalid target phase: {target_phase}")
