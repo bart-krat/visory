@@ -5,24 +5,30 @@ type EditButtonsProps = {
 }
 
 export default function EditButtons({ phase, loading, onNavigate }: EditButtonsProps) {
-  // Only show edit buttons after completing at least one phase
-  if (!['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)) {
+  // Show container starting from task collection phase
+  if (!['collect_tasks', 'constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)) {
     return null
   }
 
+  // Check if any buttons should be shown
+  const hasAnyButtons = ['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)
+
   return (
     <div style={{
-      marginBottom: 16,
-      padding: 12,
-      background: '#f8f9fa',
+      padding: hasAnyButtons ? 12 : 0,
+      background: hasAnyButtons ? '#f8f9fa' : 'transparent',
       borderRadius: 8,
-      border: '1px solid #dee2e6',
+      border: hasAnyButtons ? '1px solid #dee2e6' : 'none',
+      minHeight: hasAnyButtons ? 'auto' : 0,
+      marginBottom: hasAnyButtons ? 16 : 0,
     }}>
-      <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-        Need to make changes?
-      </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase) && (
+      {hasAnyButtons && (
+        <>
+          <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+            Need to make changes?
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase) && (
           <button
             onClick={() => onNavigate('collect_tasks')}
             disabled={loading}
@@ -75,26 +81,9 @@ export default function EditButtons({ phase, loading, onNavigate }: EditButtonsP
             🎯 Edit Constraints
           </button>
         )}
-
-        {phase === 'complete' && (
-          <button
-            onClick={() => onNavigate('reoptimize')}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              background: '#28a745',
-              border: 'none',
-              color: '#fff',
-              cursor: loading ? 'default' : 'pointer',
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
-            🔄 Re-optimize
-          </button>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

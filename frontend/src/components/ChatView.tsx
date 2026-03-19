@@ -96,14 +96,30 @@ export default function ChatView() {
       const fetchTasks = async () => {
         const data = await api.fetchWorkflowState()
         if (data?.tasks) {
+          // Pre-populate tasks with existing durations and time slots
           setTasksForConstraints(
-            data.tasks.map((t: any) => ({
-              name: t.name,
-              category: t.category,
-              duration: t.duration || 30,
-              time_slot: '',
-            }))
+            data.tasks.map((t: any) => {
+              // Convert time_slot from minutes to "HH:MM" format
+              let timeSlot = ''
+              if (t.time_slot !== null && t.time_slot !== undefined) {
+                const hours = Math.floor(t.time_slot / 60)
+                const minutes = t.time_slot % 60
+                timeSlot = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+              }
+              return {
+                name: t.name,
+                category: t.category,
+                duration: t.duration || 30,
+                time_slot: timeSlot,
+              }
+            })
           )
+        }
+
+        // Pre-populate time window if it exists
+        if (data?.time_window) {
+          setTimeWindowStart(data.time_window.start_time)
+          setTimeWindowEnd(data.time_window.end_time)
         }
       }
       fetchTasks()
@@ -114,12 +130,44 @@ export default function ChatView() {
   useEffect(() => {
     if (phase === 'constraint_clarification' && sessionId) {
       const fetchOptions = async () => {
-        const data = await api.fetchConstraintOptions()
-        if (data) {
-          setConstraintOptions(data.options || [])
-          setSupportsCustomText(data.supports_custom_text || false)
-          setSelectedConstraints(new Set())
-          setCustomConstraints([''])
+        // Fetch available constraint options
+        const optionsData = await api.fetchConstraintOptions()
+        if (optionsData) {
+          setConstraintOptions(optionsData.options || [])
+          setSupportsCustomText(optionsData.supports_custom_text || false)
+        }
+
+        // Fetch current state to pre-populate existing selections
+        const stateData = await api.fetchWorkflowState()
+        if (stateData?.constraints) {
+          // Map mandatory_tasks to button IDs (format: TASK_{task_name})
+          const preSelectedConstraints = new Set<string>()
+
+          if (stateData.constraints.mandatory_tasks) {
+            stateData.constraints.mandatory_tasks.forEach((taskName: string) => {
+              preSelectedConstraints.add(`TASK_${taskName}`)
+            })
+          }
+
+          setSelectedConstraints(preSelectedConstraints)
+
+          // Extract custom text constraints from "undefined" constraint types
+          const customTextConstraints: string[] = []
+          if (stateData.constraints.raw && Array.isArray(stateData.constraints.raw)) {
+            stateData.constraints.raw.forEach((constraint: any) => {
+              if (constraint.type === 'undefined' && constraint.description) {
+                customTextConstraints.push(constraint.description)
+              }
+            })
+          }
+
+          // Pre-populate custom constraints text boxes
+          if (customTextConstraints.length > 0) {
+            setCustomConstraints(customTextConstraints)
+          } else if (preSelectedConstraints.size === 0) {
+            // Only reset to empty if no button or custom constraints exist
+            setCustomConstraints([''])
+          }
         }
       }
       fetchOptions()
@@ -355,6 +403,20 @@ export default function ChatView() {
     return phaseLabels[phase] || phase
   }
 
+  const handleSaveSchedule = async () => {
+    if (!finalSchedule || !sessionId) return
+
+    // TODO: Implement save to calendar backend
+    const today = new Date().toISOString().split('T')[0]
+    console.log('Saving schedule for date:', today, finalSchedule)
+    alert('Schedule save functionality coming soon!')
+  }
+
+  const handleViewCalendar = () => {
+    // TODO: Navigate to calendar view
+    alert('Calendar view coming soon!')
+  }
+
   // Welcome screen
   if (phase === 'welcome') {
     return (
@@ -372,46 +434,63 @@ export default function ChatView() {
   return (
     <div style={{
       display: 'flex',
-      gap: 24,
-      alignItems: 'stretch',
+      flexDirection: 'column',
       height: showScheduleSideBySide ? 'calc(100vh - 220px)' : 'auto',
     }}>
-      {/* Chat Column */}
+      {/* Pinned Edit Buttons at Top */}
       <div style={{
-        flex: 1,
-        minWidth: 0,
-        overflowY: 'auto',
-        maxHeight: showScheduleSideBySide ? '100%' : 'none',
+        position: 'sticky',
+        top: 0,
+        zIndex: 10,
+        background: '#fff',
+        paddingBottom: 8,
       }}>
-        {phase && phase !== 'complete' && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-              Phase: {getPhaseLabel()}
-            </div>
-          {/* Questionnaire progress bar */}
-          {phase === 'questionnaire' && questionnaireProgress && (
-            <div style={{ marginTop: 4 }}>
-              <div style={{
-                height: 6,
-                background: '#e9ecef',
-                borderRadius: 3,
-                overflow: 'hidden',
-              }}>
+        <EditButtons phase={phase} loading={api.loading} onNavigate={navigateToPhase} />
+      </div>
+
+      {/* Main Content Area */}
+      <div style={{
+        display: 'flex',
+        gap: 24,
+        alignItems: 'stretch',
+        flex: 1,
+        minHeight: 0,
+      }}>
+        {/* Chat Column */}
+        <div style={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: 'auto',
+          maxHeight: '100%',
+        }}>
+          {phase && phase !== 'complete' && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+                Phase: {getPhaseLabel()}
+              </div>
+            {/* Questionnaire progress bar */}
+            {phase === 'questionnaire' && questionnaireProgress && (
+              <div style={{ marginTop: 4 }}>
                 <div style={{
-                  height: '100%',
-                  width: `${(questionnaireProgress.current / questionnaireProgress.total) * 100}%`,
-                  background: '#007bff',
-                  transition: 'width 0.3s ease',
-                }} />
+                  height: 6,
+                  background: '#e9ecef',
+                  borderRadius: 3,
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${(questionnaireProgress.current / questionnaireProgress.total) * 100}%`,
+                    background: '#007bff',
+                    transition: 'width 0.3s ease',
+                  }} />
+                </div>
+                <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                  Question {questionnaireProgress.current} of {questionnaireProgress.total}
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
-                Question {questionnaireProgress.current} of {questionnaireProgress.total}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      <EditButtons phase={phase} loading={api.loading} onNavigate={navigateToPhase} />
+            )}
+          </div>
+        )}
       <div style={{ border: '1px solid #ccc', borderRadius: 8, padding: 16, minHeight: 300, marginBottom: 16 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, textAlign: m.role === 'user' ? 'right' : 'left' }}>
@@ -751,17 +830,74 @@ export default function ChatView() {
       )}
       </div>
 
-      {/* Schedule Column - shown when complete */}
-      {showScheduleSideBySide && (
-        <div style={{
-          flex: 1,
-          minWidth: 0,
-          overflowY: 'auto',
-          maxHeight: '100%',
-        }}>
-          <ScheduleView schedule={finalSchedule} timeWindow={finalTimeWindow} />
-        </div>
-      )}
+        {/* Schedule Column - shown when complete */}
+        {showScheduleSideBySide && (
+          <div style={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            maxHeight: '100%',
+          }}>
+            {/* Action buttons above schedule */}
+            <div style={{
+              display: 'flex',
+              gap: 12,
+              marginBottom: 16,
+              padding: '0 4px',
+            }}>
+              <button
+                onClick={handleSaveSchedule}
+                style={{
+                  flex: 1,
+                  padding: '12px 20px',
+                  borderRadius: 8,
+                  background: '#28a745',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                💾 Save Schedule
+              </button>
+              <button
+                onClick={handleViewCalendar}
+                style={{
+                  flex: 1,
+                  padding: '12px 20px',
+                  borderRadius: 8,
+                  background: '#007bff',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                📅 View Calendar
+              </button>
+            </div>
+
+            {/* Schedule view */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+            }}>
+              <ScheduleView schedule={finalSchedule} timeWindow={finalTimeWindow} />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
