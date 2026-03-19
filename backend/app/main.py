@@ -14,13 +14,17 @@ origins = [
     "http://localhost:3000",
 ]
 
-# Add Vercel/production URL if set
+# Add production URL if set (supports comma-separated list)
 if prod_url := os.getenv("FRONTEND_URL"):
-    origins.append(prod_url)
+    for url in prod_url.split(","):
+        url = url.strip()
+        if url:
+            origins.append(url)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

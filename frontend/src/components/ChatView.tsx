@@ -5,6 +5,9 @@ import EditButtons from './workflow/EditButtons'
 import { useWorkflowAPI } from '../hooks/useWorkflowAPI'
 import { categoryEmojis, phaseLabels } from '../styles/constants'
 
+// API base URL - empty for local dev (uses Vite proxy), set for production
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 type Message = { role: 'user' | 'assistant'; content: string }
 type ScheduledTask = {
   task: string
@@ -50,7 +53,7 @@ export default function ChatView() {
   useEffect(() => {
     const createSession = async () => {
       try {
-        const res = await fetch('/api/workflow/start', { method: 'POST' })
+        const res = await fetch(`${API_BASE}/api/workflow/start`, { method: 'POST' })
         const data = await res.json()
         setSessionId(data.session_id)
         setPhase(data.phase)

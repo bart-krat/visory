@@ -1,5 +1,8 @@
 import { useState } from 'react'
 
+// API base URL - empty for local dev (uses Vite proxy), set for production
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 export function useWorkflowAPI(sessionId: string | null) {
   const [loading, setLoading] = useState(false)
 
@@ -7,7 +10,7 @@ export function useWorkflowAPI(sessionId: string | null) {
     if (!sessionId) return null
     setLoading(true)
     try {
-      const res = await fetch(`/api/utility/start?session_id=${sessionId}`, { method: 'POST' })
+      const res = await fetch(`${API_BASE}/api/utility/start?session_id=${sessionId}`, { method: 'POST' })
       const data = await res.json()
       return data
     } catch (error) {
@@ -22,7 +25,7 @@ export function useWorkflowAPI(sessionId: string | null) {
     if (!sessionId) return null
     setLoading(true)
     try {
-      const res = await fetch(`/api/planning/start?session_id=${sessionId}`, { method: 'POST' })
+      const res = await fetch(`${API_BASE}/api/planning/start?session_id=${sessionId}`, { method: 'POST' })
       const data = await res.json()
       return data
     } catch (error) {
@@ -36,7 +39,7 @@ export function useWorkflowAPI(sessionId: string | null) {
   const fetchWorkflowState = async () => {
     if (!sessionId) return null
     try {
-      const res = await fetch(`/api/workflow/${sessionId}/state`)
+      const res = await fetch(`${API_BASE}/api/workflow/${sessionId}/state`)
       const data = await res.json()
       return data
     } catch (error) {
@@ -49,7 +52,7 @@ export function useWorkflowAPI(sessionId: string | null) {
     if (!sessionId) return null
     setLoading(true)
     try {
-      const res = await fetch(`/api/workflow/navigate?session_id=${sessionId}&target_phase=${targetPhase}`, {
+      const res = await fetch(`${API_BASE}/api/workflow/navigate?session_id=${sessionId}&target_phase=${targetPhase}`, {
         method: 'POST',
       })
       const data = await res.json()
@@ -67,7 +70,7 @@ export function useWorkflowAPI(sessionId: string | null) {
     setLoading(true)
     try {
       if (phase === 'questionnaire') {
-        const res = await fetch('/api/utility/message', {
+        const res = await fetch(`${API_BASE}/api/utility/message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sessionId, message })
@@ -76,7 +79,7 @@ export function useWorkflowAPI(sessionId: string | null) {
         return { type: 'json', data }
       } else {
         // Streaming response
-        const res = await fetch('/api/workflow/message', {
+        const res = await fetch(`${API_BASE}/api/workflow/message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sessionId, message })
@@ -102,7 +105,7 @@ export function useWorkflowAPI(sessionId: string | null) {
     if (!sessionId) return null
     setLoading(true)
     try {
-      const res = await fetch('/api/workflow/constraints', {
+      const res = await fetch(`${API_BASE}/api/workflow/constraints`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -129,7 +132,7 @@ export function useWorkflowAPI(sessionId: string | null) {
     if (!sessionId) return null
     setLoading(true)
     try {
-      const res = await fetch('/api/constraints/submit', {
+      const res = await fetch(`${API_BASE}/api/constraints/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -151,7 +154,7 @@ export function useWorkflowAPI(sessionId: string | null) {
   const fetchConstraintOptions = async () => {
     if (!sessionId) return null
     try {
-      const res = await fetch(`/api/constraints/options/${sessionId}`)
+      const res = await fetch(`${API_BASE}/api/constraints/options/${sessionId}`)
       const data = await res.json()
       return data
     } catch (error) {
