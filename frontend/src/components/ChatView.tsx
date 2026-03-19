@@ -169,6 +169,38 @@ export default function ChatView() {
     }
   }
 
+  // Navigate to a specific phase
+  const navigateToPhase = async (targetPhase: string) => {
+    if (!sessionId) return
+
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/workflow/navigate?session_id=${sessionId}&target_phase=${targetPhase}`, {
+        method: 'POST',
+      })
+
+      const data = await res.json()
+
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: data.message }
+      ])
+
+      setPhase(data.phase)
+
+      // Reset relevant UI state based on target phase
+      if (targetPhase === 'constraints') {
+        // Will trigger useEffect to fetch tasks
+      } else if (targetPhase === 'constraint_clarification') {
+        // Will trigger useEffect to fetch constraint options
+      }
+
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error navigating to phase' }])
+    }
+    setLoading(false)
+  }
+
   const send = async (message?: string) => {
     const msgToSend = message ?? input
     if (!msgToSend.trim() || !sessionId) return
@@ -403,6 +435,102 @@ export default function ChatView() {
     return labels[phase] || phase
   }
 
+  // Edit buttons component
+  const EditButtons = () => {
+    // Only show edit buttons after completing at least one phase
+    if (!['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)) {
+      return null
+    }
+
+    return (
+      <div style={{
+        marginBottom: 16,
+        padding: 12,
+        background: '#f8f9fa',
+        borderRadius: 8,
+        border: '1px solid #dee2e6',
+      }}>
+        <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
+          Need to make changes?
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase) && (
+            <button
+              onClick={() => navigateToPhase('collect_tasks')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                background: '#fff',
+                border: '1px solid #007bff',
+                color: '#007bff',
+                cursor: loading ? 'default' : 'pointer',
+                fontSize: 12,
+              }}
+            >
+              ✏️ Edit Tasks
+            </button>
+          )}
+
+          {['constraint_clarification', 'optimize', 'complete'].includes(phase) && (
+            <button
+              onClick={() => navigateToPhase('constraints')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                background: '#fff',
+                border: '1px solid #007bff',
+                color: '#007bff',
+                cursor: loading ? 'default' : 'pointer',
+                fontSize: 12,
+              }}
+            >
+              ⏱️ Edit Durations & Times
+            </button>
+          )}
+
+          {['optimize', 'complete'].includes(phase) && (
+            <button
+              onClick={() => navigateToPhase('constraint_clarification')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                background: '#fff',
+                border: '1px solid #007bff',
+                color: '#007bff',
+                cursor: loading ? 'default' : 'pointer',
+                fontSize: 12,
+              }}
+            >
+              🎯 Edit Constraints
+            </button>
+          )}
+
+          {phase === 'complete' && (
+            <button
+              onClick={() => navigateToPhase('reoptimize')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                background: '#28a745',
+                border: 'none',
+                color: '#fff',
+                cursor: loading ? 'default' : 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              🔄 Re-optimize
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   // Welcome screen
   if (phase === 'welcome') {
     return (
@@ -579,6 +707,7 @@ export default function ChatView() {
           )}
         </div>
       )}
+      <EditButtons />
       <div style={{ border: '1px solid #ccc', borderRadius: 8, padding: 16, minHeight: 300, marginBottom: 16 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, textAlign: m.role === 'user' ? 'right' : 'left' }}>

@@ -221,6 +221,42 @@ class Orchestrator:
         self.phase = WorkflowPhase.OPTIMIZE
         yield from self._handle_optimize()
 
+    def return_to_tasks(self) -> str:
+        """Return to task collection phase, preserving existing data."""
+        self.phase = WorkflowPhase.COLLECT_TASKS
+        self._persist_state()
+
+        if self.state.raw_tasks:
+            task_list = "\n".join(f"- {t}" for t in self.state.raw_tasks)
+            return f"Let's revise your tasks. Current tasks:\n{task_list}\n\nWhat tasks would you like to plan?"
+        return PLANNING_INTRO
+
+    def return_to_constraints(self) -> str:
+        """Return to constraints phase, preserving existing tasks."""
+        if not self.state.tasks:
+            return "Please add tasks first."
+
+        self.phase = WorkflowPhase.CONSTRAINTS
+        self._persist_state()
+        return "Let's revise the durations and time slots for your tasks."
+
+    def return_to_constraint_clarification(self) -> str:
+        """Return to custom constraints phase."""
+        if not self.state.tasks or not self.state.time_window:
+            return "Please complete task collection and constraints first."
+
+        self.constraint_clarification = ConstraintClarification(tasks=self.state.tasks)
+        self.phase = WorkflowPhase.CONSTRAINT_CLARIFICATION
+        self._persist_state()
+        return "Let's revise your optimization constraints."
+
+    def reoptimize(self):
+        """Re-run optimization with current state (no changes to constraints)."""
+        if not self.state.tasks or not self.state.time_window:
+            raise ValueError("Cannot optimize without tasks and time window")
+
+        yield from self._handle_optimize()
+
     def _handle_optimize(self):
         """Handle the optimization phase."""
         yield "Creating your optimized schedule...\n\n"

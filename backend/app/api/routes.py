@@ -378,3 +378,53 @@ def workflow_state(session_id: str):
             } if state.daily_plan.time_window else None,
         } if state.daily_plan else None,
     }
+
+
+@router.post("/workflow/navigate")
+def navigate_to_phase(session_id: str, target_phase: str):
+    """Navigate back to a specific phase.
+
+    Valid target_phase values:
+    - "collect_tasks": Edit tasks
+    - "constraints": Edit durations and time slots
+    - "constraint_clarification": Edit custom constraints
+    - "reoptimize": Re-run optimization with current settings
+    """
+    orchestrator = get_orchestrator(session_id)
+    if not orchestrator:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if target_phase == "collect_tasks":
+        message = orchestrator.return_to_tasks()
+        return {
+            "success": True,
+            "phase": orchestrator.phase.value,
+            "message": message,
+        }
+    elif target_phase == "constraints":
+        message = orchestrator.return_to_constraints()
+        return {
+            "success": True,
+            "phase": orchestrator.phase.value,
+            "message": message,
+        }
+    elif target_phase == "constraint_clarification":
+        message = orchestrator.return_to_constraint_clarification()
+        return {
+            "success": True,
+            "phase": orchestrator.phase.value,
+            "message": message,
+        }
+    elif target_phase == "reoptimize":
+        # Re-run optimization
+        output_chunks = []
+        for chunk in orchestrator.reoptimize():
+            output_chunks.append(chunk)
+        return {
+            "success": True,
+            "phase": orchestrator.phase.value,
+            "message": "".join(output_chunks),
+        }
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid target phase: {target_phase}")
+
