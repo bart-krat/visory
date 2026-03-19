@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react'
 import ScheduleView from './ScheduleView'
+import WelcomeScreen from './workflow/WelcomeScreen'
+import EditButtons from './workflow/EditButtons'
+import { useWorkflowAPI } from '../hooks/useWorkflowAPI'
+import { categoryEmojis, phaseLabels } from '../styles/constants'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 type ScheduledTask = {
@@ -21,9 +25,11 @@ type TaskForConstraints = {
 export default function ChatView() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [phase, setPhase] = useState<string>('')
+
+  // Use workflow API hook
+  const api = useWorkflowAPI(sessionId)
   const [constraintOptions, setConstraintOptions] = useState<ConstraintOption[]>([])
   const [selectedConstraints, setSelectedConstraints] = useState<Set<string>>(new Set())
   const [supportsCustomText, setSupportsCustomText] = useState(false)
@@ -59,42 +65,37 @@ export default function ChatView() {
 
   // Start utility questionnaire
   const startQuestionnaire = async () => {
-    if (!sessionId) return
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/utility/start?session_id=${sessionId}`, { method: 'POST' })
-      const data = await res.json()
-      setPhase(data.phase)
-      setQuestionnaireProgress(data.progress)
-      setMessages([{ role: 'assistant', content: data.message }])
-    } catch {
-      setMessages([{ role: 'assistant', content: 'Error starting questionnaire' }])
+    const data = await api.startQuestionnaire()
+    if (data) {
+      if (data.error) {
+        setMessages([{ role: 'assistant', content: data.error }])
+      } else {
+        setPhase(data.phase)
+        setQuestionnaireProgress(data.progress)
+        setMessages([{ role: 'assistant', content: data.message }])
+      }
     }
-    setLoading(false)
   }
 
   // Start planning directly
   const startPlanning = async () => {
-    if (!sessionId) return
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/planning/start?session_id=${sessionId}`, { method: 'POST' })
-      const data = await res.json()
-      setPhase(data.phase)
-      setMessages([{ role: 'assistant', content: data.message }])
-    } catch {
-      setMessages([{ role: 'assistant', content: 'Error starting planning' }])
+    const data = await api.startPlanning()
+    if (data) {
+      if (data.error) {
+        setMessages([{ role: 'assistant', content: data.error }])
+      } else {
+        setPhase(data.phase)
+        setMessages([{ role: 'assistant', content: data.message }])
+      }
     }
-    setLoading(false)
   }
 
   // Fetch tasks when entering constraints phase
   useEffect(() => {
     if (phase === 'constraints' && sessionId) {
       const fetchTasks = async () => {
-        try {
-          const res = await fetch(`/api/workflow/${sessionId}/state`)
-          const data = await res.json()
+        const data = await api.fetchWorkflowState()
+        if (data?.tasks) {
           setTasksForConstraints(
             data.tasks.map((t: any) => ({
               name: t.name,
@@ -103,8 +104,6 @@ export default function ChatView() {
               time_slot: '',
             }))
           )
-        } catch {
-          console.error('Failed to fetch tasks')
         }
       }
       fetchTasks()
@@ -115,15 +114,12 @@ export default function ChatView() {
   useEffect(() => {
     if (phase === 'constraint_clarification' && sessionId) {
       const fetchOptions = async () => {
-        try {
-          const res = await fetch(`/api/constraints/options/${sessionId}`)
-          const data: ConstraintOptionsResponse = await res.json()
+        const data = await api.fetchConstraintOptions()
+        if (data) {
           setConstraintOptions(data.options || [])
           setSupportsCustomText(data.supports_custom_text || false)
           setSelectedConstraints(new Set())
           setCustomConstraints([''])
-        } catch {
-          console.error('Failed to fetch constraint options')
         }
       }
       fetchOptions()
@@ -139,15 +135,10 @@ export default function ChatView() {
   useEffect(() => {
     if (phase === 'complete' && sessionId) {
       const fetchSchedule = async () => {
-        try {
-          const res = await fetch(`/api/workflow/${sessionId}/state`)
-          const data = await res.json()
-          if (data.daily_plan?.schedule) {
-            setFinalSchedule(data.daily_plan.schedule)
-            setFinalTimeWindow(data.daily_plan.time_window || data.time_window)
-          }
-        } catch {
-          console.error('Failed to fetch schedule')
+        const data = await api.fetchWorkflowState()
+        if (data?.daily_plan?.schedule) {
+          setFinalSchedule(data.daily_plan.schedule)
+          setFinalTimeWindow(data.daily_plan.time_window || data.time_window)
         }
       }
       fetchSchedule()
@@ -156,49 +147,29 @@ export default function ChatView() {
 
   // Fetch current phase from server
   const fetchCurrentPhase = async () => {
-    if (!sessionId) return
-    try {
-      const res = await fetch(`/api/workflow/${sessionId}/state`)
-      const data = await res.json()
+    const data = await api.fetchWorkflowState()
+    if (data) {
       setPhase(data.phase)
       if (data.questionnaire_progress) {
         setQuestionnaireProgress(data.questionnaire_progress)
       }
-    } catch {
-      console.error('Failed to fetch workflow state')
     }
   }
 
   // Navigate to a specific phase
   const navigateToPhase = async (targetPhase: string) => {
-    if (!sessionId) return
-
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/workflow/navigate?session_id=${sessionId}&target_phase=${targetPhase}`, {
-        method: 'POST',
-      })
-
-      const data = await res.json()
-
-      setMessages(prev => [
-        ...prev,
-        { role: 'assistant', content: data.message }
-      ])
-
-      setPhase(data.phase)
-
-      // Reset relevant UI state based on target phase
-      if (targetPhase === 'constraints') {
-        // Will trigger useEffect to fetch tasks
-      } else if (targetPhase === 'constraint_clarification') {
-        // Will trigger useEffect to fetch constraint options
+    const data = await api.navigateToPhase(targetPhase)
+    if (data) {
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.error }])
+      } else {
+        setMessages(prev => [
+          ...prev,
+          { role: 'assistant', content: data.message }
+        ])
+        setPhase(data.phase)
       }
-
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error navigating to phase' }])
     }
-    setLoading(false)
   }
 
   const send = async (message?: string) => {
@@ -208,39 +179,31 @@ export default function ChatView() {
     const userMsg: Message = { role: 'user', content: msgToSend }
     setMessages(prev => [...prev, userMsg])
     setInput('')
-    setLoading(true)
 
-    try {
-      // Use utility endpoint for questionnaire, workflow endpoint for other phases
-      if (phase === 'questionnaire') {
-        const res = await fetch('/api/utility/message', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message: msgToSend })
-        })
-        const data = await res.json()
+    const result = await api.sendMessage(msgToSend, phase)
 
-        setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
-        setPhase(data.phase)
+    if (result) {
+      if (result.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: result.error }])
+      } else if (result.type === 'json' && result.data) {
+        // Questionnaire response
+        setMessages(prev => [...prev, { role: 'assistant', content: result.data.message }])
+        setPhase(result.data.phase)
 
-        if (data.progress) {
-          setQuestionnaireProgress(data.progress)
+        if (result.data.progress) {
+          setQuestionnaireProgress(result.data.progress)
         }
 
-        // If questionnaire complete, show option to start planning
-        if (data.is_complete) {
+        if (result.data.is_complete) {
           setQuestionnaireProgress(null)
         }
-      } else {
-        // Use streaming workflow endpoint for other phases
-        const res = await fetch('/api/workflow/message', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, message: msgToSend })
-        })
-
-        const reader = res.body?.getReader()
-        if (!reader) throw new Error('No reader')
+      } else if (result.type === 'stream' && result.response) {
+        // Streaming response
+        const reader = result.response.body?.getReader()
+        if (!reader) {
+          setMessages(prev => [...prev, { role: 'assistant', content: 'Error reading stream' }])
+          return
+        }
 
         const decoder = new TextDecoder()
         let assistantContent = ''
@@ -261,12 +224,10 @@ export default function ChatView() {
           })
         }
 
+        api.setLoading(false)
         await fetchCurrentPhase()
       }
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error connecting to server' }])
     }
-    setLoading(false)
   }
 
   const toggleConstraint = (optionId: string) => {
@@ -285,36 +246,19 @@ export default function ChatView() {
     })
   }
 
-  const submitConstraints2 = async () => {
-    if (!sessionId) return
-
+  const submitOptimizationConstraints = async () => {
     const constraintIds = Array.from(selectedConstraints)
-    // Filter out empty constraints and join with semicolon
     const validConstraints = customConstraints.filter(c => c.trim().length > 0)
     const combinedConstraintText = validConstraints.join('; ')
     const hasCustomText = validConstraints.length > 0
     const hasButtonSelection = constraintIds.length > 0
 
-    // Need at least one constraint type
-    if (!hasCustomText && !hasButtonSelection) {
-      // No constraints - will optimize for max utility
-    }
+    const data = await api.submitOptimizationConstraints(
+      constraintIds,
+      hasCustomText ? combinedConstraintText : null
+    )
 
-    setLoading(true)
-
-    try {
-      const res = await fetch('/api/constraints/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          constraint_ids: constraintIds,
-          custom_constraint: hasCustomText ? combinedConstraintText : null,
-        })
-      })
-
-      const data = await res.json()
-
+    if (data) {
       // Show what the user selected
       let userMessage = ''
       if (hasCustomText) {
@@ -333,22 +277,21 @@ export default function ChatView() {
         userMessage = 'Optimize schedule'
       }
 
-      setMessages(prev => [
-        ...prev,
-        { role: 'user', content: userMessage },
-        { role: 'assistant', content: data.message }
-      ])
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.error }])
+      } else {
+        setMessages(prev => [
+          ...prev,
+          { role: 'user', content: userMessage },
+          { role: 'assistant', content: data.message }
+        ])
+        setPhase(data.phase)
+      }
 
-      setPhase(data.phase)
       setSelectedConstraints(new Set())
       setConstraintOptions([])
       setCustomConstraints([''])
-
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error running optimization' }])
     }
-
-    setLoading(false)
   }
 
   const updateTaskDuration = (index: number, duration: string) => {
@@ -367,9 +310,7 @@ export default function ChatView() {
     })
   }
 
-  const submitConstraints = async () => {
-    if (!sessionId) return
-
+  const submitTaskDurationsAndTimes = async () => {
     // Validate all durations are set
     const invalidTasks = tasksForConstraints.filter(t => !t.duration || t.duration <= 0)
     if (invalidTasks.length > 0) {
@@ -377,289 +318,52 @@ export default function ChatView() {
       return
     }
 
-    setLoading(true)
+    const tasks = tasksForConstraints.map(t => ({
+      name: t.name,
+      duration: t.duration,
+      time_slot: t.time_slot || null,
+    }))
 
-    try {
-      const res = await fetch('/api/workflow/constraints', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          tasks: tasksForConstraints.map(t => ({
-            name: t.name,
-            duration: t.duration,
-            time_slot: t.time_slot || null,
-          })),
-          time_window_start: timeWindowStart,
-          time_window_end: timeWindowEnd,
-        })
-      })
+    const data = await api.submitTaskDurationsAndTimes(tasks, timeWindowStart, timeWindowEnd)
 
-      const data = await res.json()
-
+    if (data) {
       // Add a summary message
       const summary = tasksForConstraints
         .map(t => `${t.name}: ${t.duration} min${t.time_slot ? ` @ ${t.time_slot}` : ''}`)
         .join('\n')
-      setMessages(prev => [
-        ...prev,
-        { role: 'user', content: `Time window: ${timeWindowStart} - ${timeWindowEnd}\n\n${summary}` },
-        { role: 'assistant', content: data.message }
-      ])
 
-      setPhase(data.phase)
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.error }])
+      } else {
+        setMessages(prev => [
+          ...prev,
+          { role: 'user', content: `Time window: ${timeWindowStart} - ${timeWindowEnd}\n\n${summary}` },
+          { role: 'assistant', content: data.message }
+        ])
+        setPhase(data.phase)
+      }
+
       setTasksForConstraints([])
-
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Error submitting constraints' }])
     }
-
-    setLoading(false)
   }
 
   const getCategoryEmoji = (category: string) => {
-    return { health: '💪', work: '💼', personal: '🎮' }[category] || '📌'
+    return categoryEmojis[category] || '📌'
   }
 
   const getPhaseLabel = () => {
-    const labels: Record<string, string> = {
-      'welcome': 'Welcome',
-      'questionnaire': 'Values Assessment',
-      'evaluation_complete': 'Assessment Complete',
-      'collect_tasks': 'Task Collection',
-      'constraints': 'Time Constraints',
-      'constraint_clarification': 'Optimization Preferences',
-      'optimize': 'Optimizing...',
-      'complete': 'Complete',
-    }
-    return labels[phase] || phase
-  }
-
-  // Edit buttons component
-  const EditButtons = () => {
-    // Only show edit buttons after completing at least one phase
-    if (!['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)) {
-      return null
-    }
-
-    return (
-      <div style={{
-        marginBottom: 16,
-        padding: 12,
-        background: '#f8f9fa',
-        borderRadius: 8,
-        border: '1px solid #dee2e6',
-      }}>
-        <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-          Need to make changes?
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase) && (
-            <button
-              onClick={() => navigateToPhase('collect_tasks')}
-              disabled={loading}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 6,
-                background: '#fff',
-                border: '1px solid #007bff',
-                color: '#007bff',
-                cursor: loading ? 'default' : 'pointer',
-                fontSize: 12,
-              }}
-            >
-              ✏️ Edit Tasks
-            </button>
-          )}
-
-          {['constraint_clarification', 'optimize', 'complete'].includes(phase) && (
-            <button
-              onClick={() => navigateToPhase('constraints')}
-              disabled={loading}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 6,
-                background: '#fff',
-                border: '1px solid #007bff',
-                color: '#007bff',
-                cursor: loading ? 'default' : 'pointer',
-                fontSize: 12,
-              }}
-            >
-              ⏱️ Edit Durations & Times
-            </button>
-          )}
-
-          {['optimize', 'complete'].includes(phase) && (
-            <button
-              onClick={() => navigateToPhase('constraint_clarification')}
-              disabled={loading}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 6,
-                background: '#fff',
-                border: '1px solid #007bff',
-                color: '#007bff',
-                cursor: loading ? 'default' : 'pointer',
-                fontSize: 12,
-              }}
-            >
-              🎯 Edit Constraints
-            </button>
-          )}
-
-          {phase === 'complete' && (
-            <button
-              onClick={() => navigateToPhase('reoptimize')}
-              disabled={loading}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 6,
-                background: '#28a745',
-                border: 'none',
-                color: '#fff',
-                cursor: loading ? 'default' : 'pointer',
-                fontSize: 12,
-                fontWeight: 500,
-              }}
-            >
-              🔄 Re-optimize
-            </button>
-          )}
-        </div>
-      </div>
-    )
+    return phaseLabels[phase] || phase
   }
 
   // Welcome screen
   if (phase === 'welcome') {
     return (
-      <div style={{ padding: '20px 0' }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{
-            width: 64,
-            height: 64,
-            borderRadius: 16,
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 16px auto',
-            fontSize: 28,
-            boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)',
-          }}>
-            ✨
-          </div>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: 22, fontWeight: 600, color: '#333' }}>
-            How would you like to start?
-          </h2>
-          <p style={{ color: '#666', margin: 0, fontSize: 14 }}>
-            Choose an option below to begin
-          </p>
-        </div>
-
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-        }}>
-          {/* Questionnaire Option */}
-          <button
-            onClick={startQuestionnaire}
-            disabled={loading || !sessionId}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
-              padding: '20px',
-              borderRadius: 16,
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: '#fff',
-              border: 'none',
-              cursor: loading ? 'default' : 'pointer',
-              textAlign: 'left',
-              transition: 'transform 0.2s, box-shadow 0.2s',
-              boxShadow: '0 4px 15px rgba(102, 126, 234, 0.3)',
-            }}
-          >
-            <div style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              background: 'rgba(255, 255, 255, 0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 24,
-              flexShrink: 0,
-            }}>
-              🧠
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                Let AI Get to Know You
-              </div>
-              <div style={{ fontSize: 13, opacity: 0.9 }}>
-                Answer questions to personalize your planning
-              </div>
-            </div>
-            <div style={{ fontSize: 20, opacity: 0.7 }}>→</div>
-          </button>
-
-          {/* Plan Option */}
-          <button
-            onClick={startPlanning}
-            disabled={loading || !sessionId}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
-              padding: '20px',
-              borderRadius: 16,
-              background: '#fff',
-              color: '#333',
-              border: '2px solid #e8e8e8',
-              cursor: loading ? 'default' : 'pointer',
-              textAlign: 'left',
-              transition: 'transform 0.2s, border-color 0.2s',
-            }}
-          >
-            <div style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
-              background: '#f5f5f5',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 24,
-              flexShrink: 0,
-            }}>
-              ⚡
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                Plan Your Day
-              </div>
-              <div style={{ fontSize: 13, color: '#666' }}>
-                Jump straight into task planning
-              </div>
-            </div>
-            <div style={{ fontSize: 20, color: '#ccc' }}>→</div>
-          </button>
-        </div>
-
-        {loading && (
-          <div style={{
-            marginTop: 24,
-            textAlign: 'center',
-            color: '#666',
-            fontSize: 14,
-          }}>
-            Loading...
-          </div>
-        )}
-      </div>
+      <WelcomeScreen
+        loading={api.loading}
+        sessionId={sessionId}
+        onStartQuestionnaire={startQuestionnaire}
+        onStartPlanning={startPlanning}
+      />
     )
   }
 
@@ -707,7 +411,7 @@ export default function ChatView() {
           )}
         </div>
       )}
-      <EditButtons />
+      <EditButtons phase={phase} loading={api.loading} onNavigate={navigateToPhase} />
       <div style={{ border: '1px solid #ccc', borderRadius: 8, padding: 16, minHeight: 300, marginBottom: 16 }}>
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, textAlign: m.role === 'user' ? 'right' : 'left' }}>
@@ -724,10 +428,10 @@ export default function ChatView() {
             </span>
           </div>
         ))}
-        {loading && <div style={{ color: '#666' }}>Thinking...</div>}
+        {api.loading && <div style={{ color: '#666' }}>Thinking...</div>}
 
         {/* Constraints Table */}
-        {phase === 'constraints' && tasksForConstraints.length > 0 && !loading && (
+        {phase === 'constraints' && tasksForConstraints.length > 0 && !api.loading && (
           <div style={{ marginTop: 16, padding: 16, background: '#f8f9fa', borderRadius: 8 }}>
             <h4 style={{ margin: '0 0 12px 0', fontSize: 14 }}>Set task durations and optional fixed times:</h4>
 
@@ -798,7 +502,7 @@ export default function ChatView() {
             </div>
 
             <button
-              onClick={submitConstraints}
+              onClick={submitTaskDurationsAndTimes}
               style={{
                 padding: '10px 24px',
                 borderRadius: 8,
@@ -817,7 +521,7 @@ export default function ChatView() {
       </div>
 
       {/* Constraint selection UI */}
-      {phase === 'constraint_clarification' && !loading && (
+      {phase === 'constraint_clarification' && !api.loading && (
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 12, fontSize: 14, color: '#333' }}>
             Add additional constraints (optional):
@@ -953,7 +657,7 @@ export default function ChatView() {
           {/* Optimize button */}
           <div style={{ marginTop: 16 }}>
             <button
-              onClick={submitConstraints2}
+              onClick={submitOptimizationConstraints}
               style={{
                 padding: '12px 28px',
                 borderRadius: 8,
@@ -984,14 +688,14 @@ export default function ChatView() {
         <div style={{ textAlign: 'center', marginBottom: 16 }}>
           <button
             onClick={startPlanning}
-            disabled={loading}
+            disabled={api.loading}
             style={{
               padding: '14px 32px',
               borderRadius: 8,
               background: '#007bff',
               color: '#fff',
               border: 'none',
-              cursor: loading ? 'default' : 'pointer',
+              cursor: api.loading ? 'default' : 'pointer',
               fontSize: 16,
               fontWeight: 500,
             }}
@@ -1007,24 +711,24 @@ export default function ChatView() {
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !loading && send()}
+            onKeyDown={e => e.key === 'Enter' && !api.loading && send()}
             placeholder={phase === 'questionnaire' ? "Type your answer..." : "Type your tasks..."}
             style={{ flex: 1, padding: 12, borderRadius: 8, border: '1px solid #ccc' }}
-            disabled={loading}
+            disabled={api.loading}
           />
           <button
             onClick={() => send()}
-            disabled={loading || !sessionId || !input.trim()}
+            disabled={api.loading || !sessionId || !input.trim()}
             style={{
               padding: '12px 24px',
               borderRadius: 8,
-              background: loading || !input.trim() ? '#ccc' : '#007bff',
+              background: api.loading || !input.trim() ? '#ccc' : '#007bff',
               color: '#fff',
               border: 'none',
-              cursor: loading || !input.trim() ? 'default' : 'pointer'
+              cursor: api.loading || !input.trim() ? 'default' : 'pointer'
             }}
           >
-            {loading ? '...' : 'Send'}
+            {api.loading ? '...' : 'Send'}
           </button>
         </div>
       )}
