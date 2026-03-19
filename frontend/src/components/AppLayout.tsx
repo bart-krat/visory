@@ -50,7 +50,7 @@ function FullScreenCalendar() {
       left: 0,
       right: 0,
       bottom: 0,
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      background: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)', // Turquoise gradient
       display: 'flex',
       flexDirection: 'column',
       padding: '20px',

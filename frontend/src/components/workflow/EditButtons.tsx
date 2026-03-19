@@ -10,8 +10,8 @@ export default function EditButtons({ phase, loading, onNavigate }: EditButtonsP
     return null
   }
 
-  // Check if any buttons should be shown
-  const hasAnyButtons = ['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)
+  // Always show buttons when in planner phases
+  const hasAnyButtons = ['collect_tasks', 'constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase)
 
   return (
     <div style={{
@@ -28,59 +28,77 @@ export default function EditButtons({ phase, loading, onNavigate }: EditButtonsP
             Need to make changes?
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {/* Return to AI Personalizer button - always shown in planner phases */}
+            <button
+              onClick={() => onNavigate('questionnaire')}
+              disabled={loading}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                background: '#fff',
+                border: '1px solid #14b8a6',
+                color: '#14b8a6',
+                cursor: loading ? 'default' : 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
+              ← AI Personalizer
+            </button>
+
             {['constraints', 'constraint_clarification', 'optimize', 'complete'].includes(phase) && (
-          <button
-            onClick={() => onNavigate('collect_tasks')}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              background: '#fff',
-              border: '1px solid #007bff',
-              color: '#007bff',
-              cursor: loading ? 'default' : 'pointer',
-              fontSize: 12,
-            }}
-          >
-            ✏️ Edit Tasks
-          </button>
-        )}
+              <button
+                onClick={() => onNavigate('collect_tasks')}
+                disabled={loading}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  background: '#fff',
+                  border: '1px solid #14b8a6',
+                  color: '#14b8a6',
+                  cursor: loading ? 'default' : 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                ✏️ Edit Tasks
+              </button>
+            )}
 
-        {['constraint_clarification', 'optimize', 'complete'].includes(phase) && (
-          <button
-            onClick={() => onNavigate('constraints')}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              background: '#fff',
-              border: '1px solid #007bff',
-              color: '#007bff',
-              cursor: loading ? 'default' : 'pointer',
-              fontSize: 12,
-            }}
-          >
-            ⏱️ Edit Durations & Times
-          </button>
-        )}
+            {['constraint_clarification', 'optimize', 'complete'].includes(phase) && (
+              <button
+                onClick={() => onNavigate('constraints')}
+                disabled={loading}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  background: '#fff',
+                  border: '1px solid #14b8a6',
+                  color: '#14b8a6',
+                  cursor: loading ? 'default' : 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                ⏱️ Edit Durations & Times
+              </button>
+            )}
 
-        {['optimize', 'complete'].includes(phase) && (
-          <button
-            onClick={() => onNavigate('constraint_clarification')}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              background: '#fff',
-              border: '1px solid #007bff',
-              color: '#007bff',
-              cursor: loading ? 'default' : 'pointer',
-              fontSize: 12,
-            }}
-          >
-            🎯 Edit Constraints
-          </button>
-        )}
+            {['optimize', 'complete'].includes(phase) && (
+              <button
+                onClick={() => onNavigate('constraint_clarification')}
+                disabled={loading}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  background: '#fff',
+                  border: '1px solid #14b8a6',
+                  color: '#14b8a6',
+                  cursor: loading ? 'default' : 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                🎯 Edit Constraints
+              </button>
+            )}
           </div>
         </>
       )}

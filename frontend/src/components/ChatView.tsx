@@ -211,11 +211,21 @@ export default function ChatView() {
       if (data.error) {
         setMessages(prev => [...prev, { role: 'assistant', content: data.error }])
       } else {
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: data.message }
-        ])
+        // Clear chat history when returning to questionnaire for a fresh start
+        if (targetPhase === 'questionnaire') {
+          setMessages([{ role: 'assistant', content: data.message }])
+        } else {
+          setMessages(prev => [
+            ...prev,
+            { role: 'assistant', content: data.message }
+          ])
+        }
         setPhase(data.phase)
+
+        // Handle questionnaire progress if returning to questionnaire
+        if (data.progress) {
+          setQuestionnaireProgress(data.progress)
+        }
       }
     }
   }
@@ -480,7 +490,7 @@ export default function ChatView() {
                   <div style={{
                     height: '100%',
                     width: `${(questionnaireProgress.current / questionnaireProgress.total) * 100}%`,
-                    background: '#007bff',
+                    background: '#14b8a6',
                     transition: 'width 0.3s ease',
                   }} />
                 </div>
@@ -495,7 +505,7 @@ export default function ChatView() {
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 12, textAlign: m.role === 'user' ? 'right' : 'left' }}>
             <span style={{
-              background: m.role === 'user' ? '#007bff' : '#e9ecef',
+              background: m.role === 'user' ? '#14b8a6' : '#e9ecef',
               color: m.role === 'user' ? '#fff' : '#000',
               padding: '8px 12px',
               borderRadius: 16,
@@ -585,7 +595,7 @@ export default function ChatView() {
               style={{
                 padding: '10px 24px',
                 borderRadius: 8,
-                background: '#007bff',
+                background: '#14b8a6',
                 color: '#fff',
                 border: 'none',
                 cursor: 'pointer',
@@ -740,7 +750,7 @@ export default function ChatView() {
               style={{
                 padding: '12px 28px',
                 borderRadius: 8,
-                background: '#007bff',
+                background: '#14b8a6',
                 color: '#fff',
                 border: 'none',
                 cursor: 'pointer',
@@ -771,7 +781,7 @@ export default function ChatView() {
             style={{
               padding: '14px 32px',
               borderRadius: 8,
-              background: '#007bff',
+              background: '#14b8a6',
               color: '#fff',
               border: 'none',
               cursor: api.loading ? 'default' : 'pointer',
@@ -801,7 +811,7 @@ export default function ChatView() {
             style={{
               padding: '12px 24px',
               borderRadius: 8,
-              background: api.loading || !input.trim() ? '#ccc' : '#007bff',
+              background: api.loading || !input.trim() ? '#ccc' : '#14b8a6',
               color: '#fff',
               border: 'none',
               cursor: api.loading || !input.trim() ? 'default' : 'pointer'
@@ -872,7 +882,7 @@ export default function ChatView() {
                   flex: 1,
                   padding: '12px 20px',
                   borderRadius: 8,
-                  background: '#007bff',
+                  background: '#14b8a6',
                   color: '#fff',
                   border: 'none',
                   cursor: 'pointer',

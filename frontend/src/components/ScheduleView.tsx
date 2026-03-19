@@ -12,10 +12,11 @@ type ScheduleViewProps = {
   showFullDay?: boolean
 }
 
+// Professional turquoise-themed category colors
 const CATEGORY_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  health: { bg: '#d4edda', border: '#28a745', text: '#155724' },
-  work: { bg: '#cce5ff', border: '#007bff', text: '#004085' },
-  personal: { bg: '#fff3cd', border: '#ffc107', text: '#856404' },
+  health: { bg: '#ccfbf1', border: '#14b8a6', text: '#0f766e' },     // Turquoise
+  work: { bg: '#cffafe', border: '#06b6d4', text: '#0e7490' },       // Cyan
+  personal: { bg: '#ddd6fe', border: '#8b5cf6', text: '#5b21b6' },  // Purple accent
 }
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -71,7 +72,7 @@ export default function ScheduleView({ schedule, timeWindow, showFullDay = true 
     }}>
       {/* Header with date */}
       <div style={{
-        background: 'linear-gradient(135deg, #007bff 0%, #0056b3 100%)',
+        background: 'linear-gradient(135deg, #14b8a6 0%, #0891b2 100%)', // Turquoise gradient
         color: '#fff',
         padding: '16px 20px',
       }}>
@@ -227,10 +228,10 @@ export default function ScheduleView({ schedule, timeWindow, showFullDay = true 
           {showFullDay && (
             <span style={{
               padding: '2px 8px',
-              background: 'rgba(0, 123, 255, 0.1)',
+              background: 'rgba(20, 184, 166, 0.1)', // Turquoise with transparency
               borderRadius: 4,
               fontSize: 12,
-              color: '#007bff',
+              color: '#14b8a6', // Turquoise
             }}>
               {timeWindow.start_time} - {timeWindow.end_time}
             </span>

@@ -43,32 +43,40 @@ class ResultsService:
         Returns:
             A validation message explaining the outcome.
         """
-        # Check for undefined constraints first
+        # Check for undefined/ambiguous constraints
         undefined_constraints = [c for c in constraint_set.constraints if isinstance(c, UndefinedConstraint)]
-        undefined_warning = ""
+        undefined_message = ""
         if undefined_constraints:
-            undefined_warning = "\n\n⚠️ **Note:** Some constraints could not be encoded:\n"
-            for uc in undefined_constraints:
-                undefined_warning += f"- \"{uc.description}\" - This constraint is too subjective/vague to enforce automatically\n"
-            undefined_warning += "\nThese have been ignored during optimization.\n"
+            # If LLM optimizer was used, it handled these constraints
+            if optimizer_type == "llm":
+                undefined_message = "\n\n💡 **AI-Powered Scheduling:** Your preferences were interpreted using AI reasoning:\n"
+                for uc in undefined_constraints:
+                    undefined_message += f"- \"{uc.description}\"\n"
+                undefined_message += "\nThe LLM optimizer applied its understanding of these ambiguous constraints to create your schedule.\n"
+            else:
+                # Other optimizers can't handle undefined constraints
+                undefined_message = "\n\n⚠️ **Note:** Some constraints could not be encoded:\n"
+                for uc in undefined_constraints:
+                    undefined_message += f"- \"{uc.description}\" - This constraint is too subjective/vague for rule-based optimization\n"
+                undefined_message += "\nThese have been ignored during optimization.\n"
 
         # CASE 2: Check for constraint contradictions
         contradictions = self._detect_contradictions(constraint_set, all_tasks)
         if contradictions:
-            return self._explain_contradictions(contradictions) + undefined_warning
+            return self._explain_contradictions(contradictions) + undefined_message
 
         # If no schedule was produced
         if len(daily_plan.schedule) == 0:
             if not constraint_set.is_empty():
                 # Could be contradictory or just impossible to fit
-                return self._explain_constraint_failure(constraint_set, all_tasks, daily_plan) + undefined_warning
+                return self._explain_constraint_failure(constraint_set, all_tasks, daily_plan) + undefined_message
             else:
                 return "Could not fit any tasks in the available time window. Try extending your available hours or reducing task durations."
 
         # CASE 3: Check if optimizer satisfied the constraints
         unmet_constraints = self._check_constraints_met(daily_plan, constraint_set, all_tasks)
         if unmet_constraints:
-            return self._explain_unmet_constraints(unmet_constraints, constraint_set) + undefined_warning
+            return self._explain_unmet_constraints(unmet_constraints, constraint_set) + undefined_message
 
         # CASE 1: Success - constraints met and schedule optimized
         scheduled_count = len(daily_plan.schedule)
@@ -78,12 +86,12 @@ class ResultsService:
         real_constraints = [c for c in constraint_set.constraints if not isinstance(c, UndefinedConstraint)]
 
         if real_constraints:
-            return f"✅ All constraints satisfied. Your optimized schedule is ready!" + undefined_warning
+            return f"✅ All constraints satisfied. Your optimized schedule is ready!" + undefined_message
         else:
             if scheduled_count == total_count:
-                return "Here is your optimized schedule. All tasks have been included!" + undefined_warning
+                return "Here is your optimized schedule. All tasks have been included!" + undefined_message
             else:
-                return f"Here is your optimized schedule. {scheduled_count} out of {total_count} tasks have been scheduled." + undefined_warning
+                return f"Here is your optimized schedule. {scheduled_count} out of {total_count} tasks have been scheduled." + undefined_message
 
     def _detect_contradictions(
         self, constraint_set: ConstraintSet, all_tasks: list[Task]

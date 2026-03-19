@@ -392,6 +392,7 @@ def navigate_to_phase(session_id: str, target_phase: str):
     """Navigate back to a specific phase.
 
     Valid target_phase values:
+    - "questionnaire": Return to AI Personalizer
     - "collect_tasks": Edit tasks
     - "constraints": Edit durations and time slots
     - "constraint_clarification": Edit custom constraints
@@ -400,7 +401,22 @@ def navigate_to_phase(session_id: str, target_phase: str):
     if not orchestrator:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if target_phase == "collect_tasks":
+    if target_phase == "questionnaire":
+        # Create/restart questionnaire for this session
+        questionnaire = UtilityQuestionnaire()
+        _utility_sessions[session_id] = questionnaire
+
+        first_question = questionnaire.get_current_question()
+        q_num = questionnaire.get_question_number()
+        total = questionnaire.get_total_questions()
+
+        return {
+            "success": True,
+            "phase": "questionnaire",
+            "message": f"Let's personalize your schedule. Question {q_num}/{total}: {first_question}",
+            "progress": {"current": q_num, "total": total},
+        }
+    elif target_phase == "collect_tasks":
         message = orchestrator.return_to_tasks()
         return {
             "success": True,
