@@ -96,8 +96,35 @@ class OrderedAfter:
         return f"'{self.task_name}' after '{self.after_task}'"
 
 
+@dataclass
+class TimeRangeConstraint:
+    """Task must be scheduled within a time range."""
+    task_name: str
+    after_time: int | None = None   # Optional: must start after this time (minutes from midnight)
+    before_time: int | None = None  # Optional: must start before this time (minutes from midnight)
+
+    def __str__(self) -> str:
+        parts = [f"'{self.task_name}'"]
+        if self.after_time is not None:
+            h, m = divmod(self.after_time, 60)
+            parts.append(f"after {h:02d}:{m:02d}")
+        if self.before_time is not None:
+            h, m = divmod(self.before_time, 60)
+            parts.append(f"before {h:02d}:{m:02d}")
+        return " ".join(parts)
+
+
+@dataclass
+class UndefinedConstraint:
+    """A constraint that couldn't be encoded for the optimizer."""
+    description: str  # The user's original text
+
+    def __str__(self) -> str:
+        return f"[Cannot encode: '{self.description}']"
+
+
 # Union of all constraint types
-ConstraintType = MustIncludeTask | MustIncludeCategory | FixedTimeSlot | OrderedAfter
+ConstraintType = MustIncludeTask | MustIncludeCategory | FixedTimeSlot | OrderedAfter | TimeRangeConstraint | UndefinedConstraint
 
 
 @dataclass
@@ -129,9 +156,18 @@ class ConstraintSet:
         """Extract ordering as [(before, after), ...]."""
         return [(c.after_task, c.task_name) for c in self.constraints if isinstance(c, OrderedAfter)]
 
+    @property
+    def time_range_constraints(self) -> dict[str, tuple[int | None, int | None]]:
+        """Extract time range constraints as {task_name: (after_time, before_time)}."""
+        return {
+            c.task_name: (c.after_time, c.before_time)
+            for c in self.constraints
+            if isinstance(c, TimeRangeConstraint)
+        }
+
     def has_complex_constraints(self) -> bool:
         """Check if constraints require EnumerationOptimizer."""
-        return bool(self.fixed_slots or self.ordering_constraints)
+        return bool(self.fixed_slots or self.ordering_constraints or self.time_range_constraints)
 
     def is_empty(self) -> bool:
         """Check if there are no constraints."""
@@ -155,6 +191,15 @@ class ConstraintSet:
                 result.append({"type": "fixed_time_slot", "task_name": c.task_name, "start_time": c.start_time})
             elif isinstance(c, OrderedAfter):
                 result.append({"type": "ordered_after", "task_name": c.task_name, "after_task": c.after_task})
+            elif isinstance(c, TimeRangeConstraint):
+                result.append({
+                    "type": "time_range",
+                    "task_name": c.task_name,
+                    "after_time": c.after_time,
+                    "before_time": c.before_time,
+                })
+            elif isinstance(c, UndefinedConstraint):
+                result.append({"type": "undefined", "description": c.description})
         return result
 
     @classmethod
@@ -171,6 +216,14 @@ class ConstraintSet:
                 cs.add(FixedTimeSlot(task_name=item["task_name"], start_time=item["start_time"]))
             elif ctype == "ordered_after":
                 cs.add(OrderedAfter(task_name=item["task_name"], after_task=item["after_task"]))
+            elif ctype == "time_range":
+                cs.add(TimeRangeConstraint(
+                    task_name=item["task_name"],
+                    after_time=item.get("after_time"),
+                    before_time=item.get("before_time"),
+                ))
+            elif ctype == "undefined":
+                cs.add(UndefinedConstraint(description=item["description"]))
         return cs
 
 

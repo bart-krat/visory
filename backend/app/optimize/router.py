@@ -97,6 +97,7 @@ class OptimizerRouter:
                 mandatory_categories=cs.mandatory_categories or None,
                 fixed_slots=cs.fixed_slots or None,
                 ordering_constraints=cs.ordering_constraints or None,
+                time_range_constraints=cs.time_range_constraints or None,
             )
 
         # SIMPLE and GREEDY don't use constraints

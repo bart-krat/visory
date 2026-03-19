@@ -13,6 +13,8 @@ from app.state import (
     MustIncludeCategory,
     FixedTimeSlot,
     OrderedAfter,
+    TimeRangeConstraint,
+    UndefinedConstraint,
 )
 from app.chat import get_chat_service
 
@@ -40,6 +42,21 @@ CONSTRAINT_MATCHING_PROMPT = '''You are a constraint parser for a daily planning
 4. **OrderedAfter** - A task must come after another task
    Format: {{"type": "ordered_after", "task_name": "<task that comes second>", "after_task": "<task that comes first>"}}
 
+5. **TimeRangeConstraint** - A task must be scheduled within a time range
+   Format: {{"type": "time_range", "task_name": "<exact task name>", "after_time": <minutes or null>, "before_time": <minutes or null>}}
+   Use this for phrases like "in the morning", "in the afternoon", "after 3pm", "before lunch", etc.
+   Time ranges:
+   - morning: after_time=360 (6am), before_time=720 (12pm)
+   - afternoon: after_time=720 (12pm), before_time=1020 (5pm)
+   - evening: after_time=1020 (5pm), before_time=null
+   - "after 3pm": after_time=900, before_time=null
+   - "before 2pm": after_time=null, before_time=840
+
+6. **UndefinedConstraint** - For constraints that cannot be encoded
+   Format: {{"type": "undefined", "description": "<user's exact phrase>"}}
+   Use this ONLY for subjective or vague constraints like "make it fun", "be creative", "prioritize happiness", etc.
+   DO NOT use this for time-based or task-based constraints that can be encoded with the above types.
+
 ## Examples
 
 User: "I need to go to the gym"
@@ -54,14 +71,17 @@ User: "meeting at 2pm"
 Tasks available: ["Meeting", "Gym", "Lunch"]
 Output: [{{"type": "fixed_time_slot", "task_name": "Meeting", "start_time": 840}}]
 
-User: "I want to do something healthy"
-Tasks available: ["Work task", "Report"]
-Categories: health, work, personal
-Output: [{{"type": "must_include_category", "category": "health"}}]
+User: "gym in the afternoon"
+Tasks available: ["Gym", "Meeting", "Lunch"]
+Output: [{{"type": "time_range", "task_name": "Gym", "after_time": 720, "before_time": 1020}}, {{"type": "must_include_task", "task_name": "Gym"}}]
 
-User: "first gym then lunch, and meeting at 3pm"
-Tasks available: ["Gym", "Lunch", "Meeting"]
-Output: [{{"type": "ordered_after", "task_name": "Lunch", "after_task": "Gym"}}, {{"type": "must_include_task", "task_name": "Gym"}}, {{"type": "must_include_task", "task_name": "Lunch"}}, {{"type": "fixed_time_slot", "task_name": "Meeting", "start_time": 900}}]
+User: "workout before noon"
+Tasks available: ["Workout", "Meeting"]
+Output: [{{"type": "time_range", "task_name": "Workout", "after_time": null, "before_time": 720}}, {{"type": "must_include_task", "task_name": "Workout"}}]
+
+User: "make the schedule fun and creative"
+Tasks available: ["Work", "Gym"]
+Output: [{{"type": "undefined", "description": "make the schedule fun and creative"}}]
 
 User: "no constraints" or "none" or "just optimize"
 Output: []
@@ -73,7 +93,9 @@ Parse the user's constraint request and output a JSON array of constraints.
 - Only reference tasks that exist in the available tasks
 - If a task name doesn't match exactly, find the closest match
 - If the user mentions a generic category (health, work, personal) without specific tasks, use MustIncludeCategory
-- When using OrderedAfter, also include MustIncludeTask for both tasks to ensure they're selected
+- When using OrderedAfter or TimeRangeConstraint, also include MustIncludeTask for the tasks to ensure they're selected
+- For time-based phrases (morning, afternoon, evening, before/after X), use TimeRangeConstraint
+- ONLY use UndefinedConstraint for subjective/vague constraints that truly cannot be encoded
 - Output ONLY the JSON array, no explanation
 
 ## User Request
@@ -216,6 +238,31 @@ class ConstraintMatcher:
                     matched_after = name
             if matched_task and matched_after:
                 return OrderedAfter(task_name=matched_task, after_task=matched_after)
+
+        elif ctype == "time_range":
+            task_name = data.get("task_name")
+            after_time = data.get("after_time")
+            before_time = data.get("before_time")
+            # Validate task exists
+            matched_name = None
+            if task_name in self.task_names:
+                matched_name = task_name
+            else:
+                for name in self.task_names:
+                    if name.lower() == task_name.lower():
+                        matched_name = name
+                        break
+            if matched_name:
+                return TimeRangeConstraint(
+                    task_name=matched_name,
+                    after_time=after_time,
+                    before_time=before_time,
+                )
+
+        elif ctype == "undefined":
+            description = data.get("description", "")
+            if description:
+                return UndefinedConstraint(description=description)
 
         return None
 

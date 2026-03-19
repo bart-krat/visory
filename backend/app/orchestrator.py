@@ -9,6 +9,7 @@ from app.state import (
 from app.categorize import get_categorize_service
 from app.constraints import get_constraints_service, ConstraintClarification, get_constraint_matcher
 from app.optimize import get_optimizer_service
+from app.results import get_results_service
 
 
 class WorkflowPhase(str, Enum):
@@ -50,6 +51,7 @@ class Orchestrator:
         self.constraints_service = get_constraints_service()
         self.constraint_clarification: ConstraintClarification | None = None
         self.optimizer_service = get_optimizer_service()
+        self.results_service = get_results_service()
 
         # Typed constraints for optimizer
         self.constraint_set = ConstraintSet()
@@ -279,6 +281,19 @@ class Orchestrator:
 
         self.phase = WorkflowPhase.COMPLETE
         self._persist_state()
+
+        # Generate AI summary of results
+        try:
+            ai_summary = self.results_service.summarize_results(
+                daily_plan=daily_plan,
+                all_tasks=self.state.tasks,
+                constraint_set=self.constraint_set,
+                optimizer_type=self.state.optimizer_type,
+            )
+            yield f"{ai_summary}\n\n"
+        except Exception as e:
+            # If AI summary fails, continue without it
+            yield f"[Summary generation skipped: {str(e)}]\n\n"
 
         schedule_text = self._format_schedule(daily_plan)
         yield schedule_text

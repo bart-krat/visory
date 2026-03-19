@@ -47,6 +47,7 @@ class EnumerationOptimizer(BaseOptimizer):
         mandatory_categories: set[str] | None = None,
         fixed_slots: dict[str, int] | None = None,
         ordering_constraints: list[tuple[str, str]] | None = None,
+        time_range_constraints: dict[str, tuple[int | None, int | None]] | None = None,
     ) -> DailyPlan:
         """Find optimal schedule by enumeration.
 
@@ -57,6 +58,7 @@ class EnumerationOptimizer(BaseOptimizer):
             mandatory_categories: Categories that must have at least one task.
             fixed_slots: Tasks fixed at specific times {task_name: minute_of_day}.
             ordering_constraints: List of (before, after) task name pairs.
+            time_range_constraints: Tasks with time range restrictions {task_name: (after_time, before_time)}.
 
         Returns:
             Optimal DailyPlan, or empty plan if no valid schedule exists.
@@ -75,6 +77,7 @@ class EnumerationOptimizer(BaseOptimizer):
         mandatory_categories = mandatory_categories or set()
         fixed_slots = fixed_slots or {}
         ordering_constraints = ordering_constraints or []
+        time_range_constraints = time_range_constraints or {}
 
         # Convert time window to minutes
         window_start, window_end = self._parse_time_window(time_window)
@@ -141,8 +144,8 @@ class EnumerationOptimizer(BaseOptimizer):
             for perm in permutations(subset_list):
                 perm_list = list(perm)
 
-                # Try to schedule this permutation
-                schedule = self._try_schedule(perm_list, gaps)
+                # Try to schedule this permutation with time range constraints
+                schedule = self._try_schedule(perm_list, gaps, time_range_constraints)
                 if schedule is None:
                     continue
 
@@ -254,14 +257,22 @@ class EnumerationOptimizer(BaseOptimizer):
         self,
         tasks: list[Task],
         gaps: list[TimeGap],
+        time_range_constraints: dict[str, tuple[int | None, int | None]] | None = None,
     ) -> list[ScheduledTask] | None:
-        """Try to schedule tasks in order into gaps.
+        """Try to schedule tasks in order into gaps, respecting time range constraints.
 
-        Returns None if tasks don't fit.
+        Args:
+            tasks: Tasks to schedule in order.
+            gaps: Available time gaps.
+            time_range_constraints: Time range restrictions {task_name: (after_time, before_time)}.
+
+        Returns:
+            List of scheduled tasks, or None if tasks don't fit.
         """
         if not tasks:
             return []
 
+        time_range_constraints = time_range_constraints or {}
         scheduled = []
         task_idx = 0
         buffer = self.buffer_minutes
@@ -273,13 +284,35 @@ class EnumerationOptimizer(BaseOptimizer):
                 task = tasks[task_idx]
                 task_end = current_time + task.duration
 
-                if task_end <= gap.end:
-                    scheduled.append(self._create_scheduled_task(task, current_time))
-                    current_time = task_end + buffer
-                    task_idx += 1
-                else:
+                # Check if task fits in this gap physically
+                if task_end > gap.end:
                     # Task doesn't fit in this gap, try next gap
                     break
+
+                # Check time range constraint if exists
+                if task.name in time_range_constraints:
+                    after_time, before_time = time_range_constraints[task.name]
+
+                    # Check if current_time satisfies the constraint
+                    if after_time is not None and current_time < after_time:
+                        # Task must start after after_time, but current_time is too early
+                        # Try to advance to after_time if it's still in this gap
+                        if after_time < gap.end and after_time + task.duration <= gap.end:
+                            current_time = after_time
+                            task_end = current_time + task.duration
+                        else:
+                            # Can't place this task in this gap due to time range constraint
+                            break
+
+                    if before_time is not None and current_time >= before_time:
+                        # Task must start before before_time, but current_time is too late
+                        # This task can't go in this or any later gap
+                        break
+
+                # Task fits and satisfies constraints
+                scheduled.append(self._create_scheduled_task(task, current_time))
+                current_time = task_end + buffer
+                task_idx += 1
 
         # Check if all tasks were scheduled
         if task_idx < len(tasks):
